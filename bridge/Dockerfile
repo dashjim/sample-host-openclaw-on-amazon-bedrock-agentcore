@@ -18,11 +18,13 @@ RUN npm install -g openclaw@latest clawhub@latest
 # Removed duckduckgo-search (redundant — lightweight agent has built-in web_search),
 # hackernews (niche), news-feed (niche) to reduce startup time.
 # --no-input --force: non-interactive, skip VirusTotal warnings
-RUN clawhub install jina-reader --no-input --force && \
-    clawhub install deep-research-pro --no-input --force && \
-    clawhub install telegram-compose --no-input --force && \
-    clawhub install transcript --no-input --force && \
-    clawhub install task-decomposer --no-input --force
+RUN for skill in jina-reader deep-research-pro telegram-compose transcript task-decomposer; do \
+      for attempt in 1 2 3 4 5; do \
+        clawhub install "$skill" --no-input --force && break; \
+        echo "Retry $attempt for $skill (waiting 15s)..."; \
+        sleep 15; \
+      done; \
+    done
 
 # Create app directory
 RUN mkdir -p /app
