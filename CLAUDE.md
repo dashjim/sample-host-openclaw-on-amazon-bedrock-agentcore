@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OpenClaw on AgentCore Runtime — a multi-channel AI messaging bot (Telegram, Slack) running as per-user serverless containers on AWS Bedrock AgentCore Runtime. Each user gets their own microVM with workspace persistence. A Router Lambda handles webhook ingestion from Telegram and Slack (text and images), resolves user identity via DynamoDB, and invokes per-user AgentCore sessions. Image uploads are stored in S3 and passed to Bedrock as multimodal content.
+OpenClaw on AgentCore Runtime — a multi-channel AI messaging bot (Telegram, Slack, Feishu) running as per-user serverless containers on AWS Bedrock AgentCore Runtime. Each user gets their own microVM with workspace persistence. A Router Lambda handles webhook ingestion from Telegram, Slack, and Feishu (text and images), resolves user identity via DynamoDB, and invokes per-user AgentCore sessions. Image uploads are stored in S3 and passed to Bedrock as multimodal content.
 
 ## Tech Stack
 
 - **Infrastructure**: CDK v2 (Python), 7 stacks
 - **Runtime**: Bedrock AgentCore Runtime (serverless ARM64 container, VPC mode, per-user sessions)
-- **Channel Ingestion**: Router Lambda behind API Gateway HTTP API (Telegram webhook, Slack Events API, image uploads)
+- **Channel Ingestion**: Router Lambda behind API Gateway HTTP API (Telegram webhook, Slack Events API, Feishu Events API, image uploads)
 - **Multimodal**: Image upload support — photos downloaded by Router Lambda, stored in S3, fetched by proxy, sent to Bedrock as multimodal content
 - **Messaging**: OpenClaw (Node.js) — headless mode, messages bridged via WebSocket
 - **Tools & Skills**: Built-in tool groups (full profile) + 5 ClawHub skills + 4 custom skills (S3 user files, EventBridge cron, ClawHub manage, API keys) + 2 built-in shim tools (web_fetch, web_search)
@@ -27,7 +27,7 @@ OpenClaw on AgentCore Runtime — a multi-channel AI messaging bot (Telegram, Sl
 ## Architecture
 
 ```
-  Telegram webhook / Slack Events API
+  Telegram webhook / Slack Events API / Feishu Events API
               |
   +-----------v-----------+
   |   Router Lambda       |  <-- API Gateway HTTP API, async self-invoke
@@ -86,7 +86,7 @@ OpenClaw on AgentCore Runtime — a multi-channel AI messaging bot (Telegram, Sl
   |   -> Cron Lambda (openclaw-cron-executor)            |
   |     1. Warm up user's AgentCore session              |
   |     2. Send cron message via AgentCore               |
-  |     3. Deliver response to Telegram/Slack            |
+  |     3. Deliver response to Telegram/Slack/Feishu      |
   +------------------------------------------------------+
 
   Supporting: VPC, KMS, Secrets Manager, Cognito,
@@ -147,14 +147,16 @@ openclaw-on-agentcore/
         migrate.js               # Move keys between backends
   lambda/
     token_metrics/index.py        # Bedrock log -> DynamoDB + CloudWatch metrics
-    router/index.py               # Webhook router (Telegram + Slack, image uploads)
+    router/index.py               # Webhook router (Telegram + Slack + Feishu, image uploads)
     router/test_image_upload.py        # Image upload unit tests (pytest)
     router/test_content_extraction.py  # Content block extraction tests (pytest)
     router/test_markdown_html.py       # Markdown-to-HTML conversion tests (pytest)
+    router/test_feishu.py              # Feishu channel unit tests (pytest, 27 tests)
     cron/index.py                      # Cron executor (warmup, invoke, deliver to channel)
   scripts/
     setup-telegram.sh             # Telegram webhook + admin allowlist (one-step)
     setup-slack.sh                # Slack Event Subscriptions + admin allowlist
+    setup-feishu.sh               # Feishu Bot event subscription + admin allowlist
     manage-allowlist.sh           # Add/remove/list users in the allowlist
   tests/
     e2e/                          # E2E tests (simulated Telegram webhooks + CloudWatch logs)
@@ -162,6 +164,7 @@ openclaw-on-agentcore/
     architecture.md               # Detailed architecture diagrams
     architecture-detailed.md      # Technical deep-dive (sequence diagrams, container internals, data flows)
     security.md                   # Complete security architecture (single source of truth — threat model, 10 defense layers, operations runbook)
+    design-feishu-channel.md      # Feishu channel integration design document
 ```
 
 ## CDK Stacks (7 stacks)
@@ -169,7 +172,7 @@ openclaw-on-agentcore/
 | Stack | Key Resources | Dependencies |
 |---|---|---|
 | **OpenClawVpc** | VPC (2 AZ), subnets, NAT, 7 VPC endpoints, flow logs | None |
-| **OpenClawSecurity** | KMS CMK, Secrets Manager (7 secrets incl. webhook validation), Cognito User Pool, optional CloudTrail | None |
+| **OpenClawSecurity** | KMS CMK, Secrets Manager (8 secrets incl. webhook validation + feishu), Cognito User Pool, optional CloudTrail | None |
 | **OpenClawAgentCore** | CfnRuntime, CfnRuntimeEndpoint, CfnWorkloadIdentity, ECR, S3 bucket, SG, IAM | Vpc, Security |
 | **OpenClawRouter** | Lambda, API Gateway HTTP API (explicit routes, throttling), DynamoDB identity table | AgentCore, Security |
 | **OpenClawObservability** | Operations dashboard, alarms, SNS, Bedrock invocation logging | None |
@@ -255,6 +258,12 @@ aws secretsmanager update-secret \
 ```
 This displays the webhook URL for Slack Event Subscriptions, prompts for your Slack member ID, and adds you to the allowlist.
 
+### Feishu Setup (Event Subscriptions + Allowlist)
+```bash
+./scripts/setup-feishu.sh
+```
+This displays the webhook URL, guides you through Feishu developer console setup (app creation, permissions, events, publishing), stores credentials in Secrets Manager, and adds you to the allowlist. Store credentials format: `{"appId":"...","appSecret":"...","verificationToken":"...","encryptKey":"..."}`
+
 ### Deploy New Bridge Version
 ```bash
 # 1. Bump image_version in cdk.json (or use -c image_version=N on the CLI)
@@ -282,6 +291,7 @@ cd bridge/skills/s3-user-files && AWS_REGION=$CDK_DEFAULT_REGION node --test com
 cd lambda/router && python -m pytest test_image_upload.py -v        # image upload unit tests
 cd lambda/router && python -m pytest test_content_extraction.py -v  # content block extraction tests
 cd lambda/router && python -m pytest test_markdown_html.py -v       # markdown-to-HTML conversion tests
+cd lambda/router && python -m pytest test_feishu.py -v              # Feishu channel unit tests (27 tests)
 ```
 
 ### E2E Tests
@@ -468,10 +478,11 @@ Only the **first channel identity** needs to be allowlisted. When a user binds a
 - JWT tokens cached per user with 60s early refresh
 
 ### Router Lambda
-- **API Gateway HTTP API**: Only explicit routes exposed (`POST /webhook/telegram`, `POST /webhook/slack`, `GET /health`). Rate limiting: burst 50, sustained 100 req/s
-- **Webhook validation**: Telegram uses `X-Telegram-Bot-Api-Secret-Token` header (set via `secret_token` on `setWebhook`). Slack uses `X-Slack-Signature` HMAC-SHA256 with 5-minute replay window
+- **API Gateway HTTP API**: Only explicit routes exposed (`POST /webhook/telegram`, `POST /webhook/slack`, `POST /webhook/feishu`, `GET /health`). Rate limiting: burst 50, sustained 100 req/s
+- **Webhook validation**: Telegram uses `X-Telegram-Bot-Api-Secret-Token` header (set via `secret_token` on `setWebhook`). Slack uses `X-Slack-Signature` HMAC-SHA256 with 5-minute replay window. Feishu uses `X-Lark-Signature` SHA-256 with timestamp+nonce+encrypt_key
 - **Async dispatch**: Self-invokes with `InvocationType=Event` for actual processing; returns 200 immediately to webhook
 - **Slack**: Handles `url_verification` challenge synchronously; ignores retries via `x-slack-retry-num` header
+- **Feishu**: Handles `url_verification` challenge synchronously (same as Slack). Uses dynamic `tenant_access_token` (2h TTL, auto-refreshed). Supports P2P and group chat (@mention stripping). Image download via `GET /open-apis/im/v1/images/{image_key}`. Configurable API domain via `FEISHU_API_DOMAIN` env var (default: `https://open.feishu.cn`, set to `https://open.larksuite.com` for Lark international)
 - **Cold start latency**: First message to a new user triggers microVM creation; lightweight agent responds in ~10-15s while OpenClaw starts in background (~1-2 min)
 - **Typing indicator + progress message**: Telegram typing indicator sent every 4s while waiting; after 30s of waiting, a one-time progress message ("Working on your request...") is sent to both Telegram and Slack so users know the bot is still working during long subagent tasks
 - **Content block extraction**: `_extract_text_from_content_blocks()` recursively unwraps nested `[{"type":"text","text":"..."}]` JSON — subagent responses (deep-research-pro, task-decomposer) can wrap content multiple levels deep
@@ -536,4 +547,4 @@ Never push to any remote (GitHub, GitLab, or otherwise) without explicit user co
 When asked to create a plan, produce it concisely in ONE iteration. Do not endlessly revise or research unless asked. If the user says 'implement', move directly to code changes — do not re-plan. If a plan is approved, begin implementation immediately.
 
 ## Project Context
-This is a Python/Node.js project (OpenClaw on AWS Bedrock AgentCore). Key components: Telegram bot, Slack Socket Mode, CDK infrastructure, Docker/ECR deployments, S3 workspace, per-user memory isolation. Subagents are OpenClaw-native running on the same AgentCore runtime — they are NOT separate Bedrock agents.
+This is a Python/Node.js project (OpenClaw on AWS Bedrock AgentCore). Key components: Telegram bot, Slack Events API, Feishu Events API, CDK infrastructure, Docker/ECR deployments, S3 workspace, per-user memory isolation. Subagents are OpenClaw-native running on the same AgentCore runtime — they are NOT separate Bedrock agents.

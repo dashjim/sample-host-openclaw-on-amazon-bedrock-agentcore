@@ -34,6 +34,8 @@ AGENTCORE_QUALIFIER = os.environ["AGENTCORE_QUALIFIER"]
 IDENTITY_TABLE_NAME = os.environ["IDENTITY_TABLE_NAME"]
 TELEGRAM_TOKEN_SECRET_ID = os.environ.get("TELEGRAM_TOKEN_SECRET_ID", "")
 SLACK_TOKEN_SECRET_ID = os.environ.get("SLACK_TOKEN_SECRET_ID", "")
+FEISHU_TOKEN_SECRET_ID = os.environ.get("FEISHU_TOKEN_SECRET_ID", "")
+FEISHU_API_DOMAIN = os.environ.get("FEISHU_API_DOMAIN", "https://open.feishu.cn")
 WEBHOOK_SECRET_ID = os.environ.get("WEBHOOK_SECRET_ID", "")
 LAMBDA_FUNCTION_NAME = os.environ.get("AWS_LAMBDA_FUNCTION_NAME", "")
 AWS_REGION = os.environ.get("AWS_REGION", "ap-southeast-2")
@@ -104,6 +106,56 @@ def _get_webhook_secret():
     return _get_secret(WEBHOOK_SECRET_ID)
 
 
+def _get_feishu_credentials():
+    """Return (app_id, app_secret, verification_token, encrypt_key) from Feishu secret."""
+    raw = _get_secret(FEISHU_TOKEN_SECRET_ID)
+    if not raw:
+        return "", "", "", ""
+    try:
+        data = json.loads(raw)
+        return (
+            data.get("appId", ""),
+            data.get("appSecret", ""),
+            data.get("verificationToken", ""),
+            data.get("encryptKey", ""),
+        )
+    except (json.JSONDecodeError, TypeError):
+        return "", "", "", ""
+
+
+# Feishu tenant_access_token cache (2h TTL, refresh 5 min early)
+_feishu_token_cache = {"token": "", "expires_at": 0}
+
+
+def _get_feishu_tenant_token():
+    """Get or refresh Feishu tenant_access_token (2h TTL, refresh 5 min early)."""
+    if _feishu_token_cache["token"] and time.time() < _feishu_token_cache["expires_at"] - 300:
+        return _feishu_token_cache["token"]
+
+    app_id, app_secret, _, _ = _get_feishu_credentials()
+    if not app_id or not app_secret:
+        logger.error("Feishu app_id/app_secret not configured")
+        return ""
+
+    url = f"{FEISHU_API_DOMAIN}/open-apis/auth/v3/tenant_access_token/internal"
+    data = json.dumps({"app_id": app_id, "app_secret": app_secret}).encode()
+    req = urllib_request.Request(url, data=data, headers={"Content-Type": "application/json"})
+
+    try:
+        resp = urllib_request.urlopen(req, timeout=10)
+        result = json.loads(resp.read())
+        if result.get("code") == 0:
+            token = result["tenant_access_token"]
+            expire = result.get("expire", 7200)
+            _feishu_token_cache["token"] = token
+            _feishu_token_cache["expires_at"] = time.time() + expire
+            return token
+        logger.error("Feishu token error: code=%s msg=%s", result.get("code"), result.get("msg", ""))
+    except Exception as e:
+        logger.error("Failed to get Feishu tenant_access_token: %s", e)
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Webhook validation helpers
 # ---------------------------------------------------------------------------
@@ -169,6 +221,36 @@ def validate_slack_webhook(headers, body):
 
     if not hmac.compare_digest(expected, signature):
         logger.warning("Slack webhook signature mismatch")
+        return False
+
+    return True
+
+
+def validate_feishu_webhook(headers, body_bytes):
+    """Validate Feishu webhook using X-Lark-Signature SHA-256 verification.
+
+    Signature = SHA256(timestamp + nonce + encrypt_key + body)
+    Returns False (fail-closed) if encrypt_key is not configured.
+    """
+    _, _, _, encrypt_key = _get_feishu_credentials()
+    if not encrypt_key:
+        logger.error("Feishu encrypt_key not configured — rejecting request (fail-closed)")
+        return False
+
+    timestamp = headers.get("x-lark-request-timestamp", "")
+    nonce = headers.get("x-lark-request-nonce", "")
+    signature = headers.get("x-lark-signature", "")
+
+    if not timestamp or not nonce or not signature:
+        logger.warning("Feishu webhook missing signature headers")
+        return False
+
+    body_b = body_bytes if isinstance(body_bytes, bytes) else body_bytes.encode("utf-8")
+    content = f"{timestamp}{nonce}{encrypt_key}".encode() + body_b
+    expected = hashlib.sha256(content).hexdigest()
+
+    if not hmac.compare_digest(expected, signature):
+        logger.warning("Feishu webhook signature mismatch")
         return False
 
     return True
@@ -726,6 +808,79 @@ def _slack_progress_notify(channel_id, bot_token, stop_event, notify_after_s=30)
         )
 
 
+def send_feishu_message(chat_id, text):
+    """Send a message via Feishu Bot API."""
+    token = _get_feishu_tenant_token()
+    if not token:
+        logger.error("No Feishu tenant_access_token available")
+        return
+
+    url = f"{FEISHU_API_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id"
+    MAX_FEISHU_TEXT_LEN = 20000
+
+    chunks = [text[i:i + MAX_FEISHU_TEXT_LEN]
+              for i in range(0, len(text), MAX_FEISHU_TEXT_LEN)] if len(text) > MAX_FEISHU_TEXT_LEN else [text]
+
+    for chunk in chunks:
+        data = json.dumps({
+            "receive_id": chat_id,
+            "msg_type": "text",
+            "content": json.dumps({"text": chunk}),
+        }).encode()
+        req = urllib_request.Request(url, data=data, headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Authorization": f"Bearer {token}",
+        })
+        try:
+            urllib_request.urlopen(req, timeout=10)
+        except Exception as e:
+            logger.error("Failed to send Feishu message to %s: %s", chat_id, e)
+
+
+def _feishu_progress_notify(chat_id, stop_event, notify_after_s=30):
+    """Send a one-time progress message to Feishu if the request takes longer than notify_after_s."""
+    if not stop_event.wait(timeout=notify_after_s):
+        send_feishu_message(chat_id, "Working on your request — this may take a few minutes.")
+
+
+def _download_feishu_image(content_str, msg_type):
+    """Download image from Feishu API using image_key.
+
+    Returns (image_bytes, content_type, filename) or (None, None, None).
+    """
+    if msg_type != "image":
+        return None, None, None
+
+    try:
+        content = json.loads(content_str) if isinstance(content_str, str) else content_str
+        image_key = content.get("image_key", "")
+    except (json.JSONDecodeError, TypeError):
+        return None, None, None
+
+    if not image_key:
+        return None, None, None
+
+    token = _get_feishu_tenant_token()
+    if not token:
+        return None, None, None
+
+    url = f"{FEISHU_API_DOMAIN}/open-apis/im/v1/images/{image_key}"
+    req = urllib_request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        resp = urllib_request.urlopen(req, timeout=30)
+        content_type = resp.headers.get("Content-Type", "image/jpeg")
+        image_bytes = resp.read(4 * 1024 * 1024)  # 4MB max
+        if content_type not in ALLOWED_IMAGE_TYPES:
+            logger.warning("Feishu image type %s not in allowed list", content_type)
+            return None, None, None
+        ext = content_type.split("/")[-1].split(";")[0]
+        filename = f"feishu_{image_key}.{ext}"
+        return image_bytes, content_type, filename
+    except Exception as e:
+        logger.error("Failed to download Feishu image %s: %s", image_key, e)
+        return None, None, None
+
+
 # ---------------------------------------------------------------------------
 # Image upload helpers
 # ---------------------------------------------------------------------------
@@ -1138,6 +1293,151 @@ def handle_slack(body, headers=None):
     return {"statusCode": 200, "body": "ok"}
 
 
+def handle_feishu(body, headers=None):
+    """Process a Feishu Events API webhook.
+
+    Returns a response dict for immediate replies (url_verification).
+    """
+    event_data = json.loads(body) if isinstance(body, str) else body
+
+    # Feishu URL verification challenge (like Slack's url_verification)
+    if event_data.get("type") == "url_verification":
+        challenge = str(event_data.get("challenge", ""))
+        if not re.match(r'^[a-zA-Z0-9_\-\.]{1,200}$', challenge):
+            return {"statusCode": 400, "body": "Invalid challenge format"}
+        return {
+            "statusCode": 200,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"challenge": challenge}),
+        }
+
+    # Extract v2 event structure
+    header = event_data.get("header", {})
+    event = event_data.get("event", {})
+    event_type = header.get("event_type", "")
+
+    if event_type != "im.message.receive_v1":
+        logger.info("Feishu: ignoring event type: %s", event_type)
+        return {"statusCode": 200, "body": "ok"}
+
+    # Ignore bot messages (same as Slack's bot_id check)
+    sender = event.get("sender", {})
+    if sender.get("sender_type") != "user":
+        return {"statusCode": 200, "body": "ok"}
+
+    sender_id = sender.get("sender_id", {}).get("open_id", "")
+    message = event.get("message", {})
+    chat_id = message.get("chat_id", "")
+    msg_type = message.get("message_type", "")
+    content_str = message.get("content", "{}")
+
+    # Parse message content (Feishu wraps content as JSON string)
+    try:
+        content = json.loads(content_str)
+    except json.JSONDecodeError:
+        content = {}
+
+    if msg_type == "text":
+        text = content.get("text", "")
+    elif msg_type == "image":
+        text = ""  # Image-only — text may be empty
+    else:
+        text = content.get("text", str(content))
+
+    # Group chat: strip @bot mention tags
+    chat_type = message.get("chat_type", "p2p")
+    if chat_type == "group":
+        mentions = message.get("mentions", [])
+        for mention in mentions:
+            mention_key = mention.get("key", "")
+            if mention_key:
+                text = text.replace(mention_key, "").strip()
+
+    has_image = msg_type == "image"
+    if not sender_id or not chat_id or (not text and not has_image):
+        return {"statusCode": 200, "body": "ok"}
+
+    if len(sender_id) > 128:
+        logger.warning("Feishu sender_id too long (%d chars), rejecting", len(sender_id))
+        return {"statusCode": 400, "body": "Invalid sender ID"}
+
+    # Handle bind commands BEFORE allowlist check
+    actor_id = f"feishu:{sender_id}"
+    is_bind, code = _is_bind_command(text)
+    if is_bind:
+        bound_user_id, success = redeem_bind_code(code, "feishu", sender_id)
+        if success:
+            send_feishu_message(chat_id, "Accounts linked successfully! Your sessions are now unified.")
+        else:
+            send_feishu_message(chat_id, "Invalid or expired link code. Please try again.")
+        return {"statusCode": 200, "body": "ok"}
+
+    # Resolve user identity
+    resolved_user_id, is_new = resolve_user("feishu", sender_id)
+
+    if resolved_user_id is None:
+        send_feishu_message(
+            chat_id,
+            f"Sorry, this bot is private and requires an invitation.\n\n"
+            f"Your ID: feishu:{sender_id}\n\n"
+            f"Send this ID to the bot admin to request access.",
+        )
+        return {"statusCode": 200, "body": "ok"}
+
+    # Handle link-accounts command
+    if _is_link_command(text):
+        bind_code = create_bind_code(resolved_user_id)
+        send_feishu_message(
+            chat_id,
+            f"Your link code is: {bind_code}\n\nEnter this code on another channel within 10 minutes "
+            f"by typing: link {bind_code}",
+        )
+        return {"statusCode": 200, "body": "ok"}
+
+    # Build message payload (structured if image, plain string if text-only)
+    agent_message = text or "hi"
+    if has_image:
+        namespace = actor_id.replace(":", "_")
+        image_bytes, content_type, _ = _download_feishu_image(content_str, msg_type)
+        if image_bytes:
+            s3_key = _upload_image_to_s3(image_bytes, namespace, content_type)
+            if s3_key:
+                agent_message = _build_structured_message(text or "What is this image?", s3_key, content_type)
+            else:
+                send_feishu_message(chat_id, "Sorry, I couldn't process that image. Please try again.")
+                return {"statusCode": 200, "body": "ok"}
+        else:
+            send_feishu_message(chat_id, "Sorry, I couldn't download that image. Please try again.")
+            return {"statusCode": 200, "body": "ok"}
+
+    # Get or create session
+    session_id = get_or_create_session(resolved_user_id)
+
+    logger.info(
+        "Feishu: user=%s actor=%s session=%s msg_len=%d has_image=%s chat_type=%s",
+        resolved_user_id, actor_id, session_id, len(text), has_image, chat_type,
+    )
+
+    # Invoke AgentCore with progress notification
+    stop_notify = threading.Event()
+    notify_thread = threading.Thread(
+        target=_feishu_progress_notify,
+        args=(chat_id, stop_notify),
+        daemon=True,
+    )
+    notify_thread.start()
+    try:
+        result = invoke_agent_runtime(session_id, resolved_user_id, actor_id, "feishu", agent_message)
+    finally:
+        stop_notify.set()
+        notify_thread.join(timeout=2)
+    response_text = result.get("response", "Sorry, I couldn't process your message.")
+    response_text = _extract_text_from_content_blocks(response_text)
+
+    send_feishu_message(chat_id, response_text)
+    return {"statusCode": 200, "body": "ok"}
+
+
 # ---------------------------------------------------------------------------
 # Lambda handler
 # ---------------------------------------------------------------------------
@@ -1154,6 +1454,8 @@ def handler(event, context):
             handle_telegram(body)
         elif channel == "slack":
             handle_slack(body, headers)
+        elif channel == "feishu":
+            handle_feishu(body, headers)
         return {"statusCode": 200, "body": "ok"}
 
     # --- Function URL entry point ---
@@ -1223,6 +1525,32 @@ def handler(event, context):
         _self_invoke_async("slack", body, headers)
         return {"statusCode": 200, "body": "ok"}
 
+    elif path.endswith("/webhook/feishu"):
+        # Feishu URL verification challenge — must respond synchronously
+        try:
+            event_data = json.loads(body) if isinstance(body, str) else body
+            if event_data.get("type") == "url_verification":
+                challenge = str(event_data.get("challenge", ""))
+                if not re.match(r'^[a-zA-Z0-9_\-\.]{1,200}$', challenge):
+                    return {"statusCode": 400, "body": "Invalid challenge format"}
+                return {
+                    "statusCode": 200,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json.dumps({"challenge": challenge}),
+                }
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Validate Feishu signature
+        body_bytes = body.encode("utf-8") if isinstance(body, str) else body
+        if not validate_feishu_webhook(headers, body_bytes):
+            logger.warning("Feishu webhook validation failed from %s", http_info.get("sourceIp", "unknown"))
+            return {"statusCode": 401, "body": "Unauthorized"}
+
+        # Self-invoke async for actual processing
+        _self_invoke_async("feishu", body, headers)
+        return {"statusCode": 200, "body": "ok"}
+
     return {"statusCode": 404, "body": "Not found"}
 
 
@@ -1237,7 +1565,7 @@ def _self_invoke_async(channel, body, headers):
                 "_channel": channel,
                 "_body": body,
                 "_headers": {k: v for k, v in (headers or {}).items()
-                             if k.startswith("x-slack-")},
+                             if k.startswith(("x-slack-", "x-lark-"))},
             }).encode(),
         )
     except Exception as e:

@@ -27,6 +27,8 @@ AGENTCORE_QUALIFIER = os.environ["AGENTCORE_QUALIFIER"]
 IDENTITY_TABLE_NAME = os.environ["IDENTITY_TABLE_NAME"]
 TELEGRAM_TOKEN_SECRET_ID = os.environ.get("TELEGRAM_TOKEN_SECRET_ID", "")
 SLACK_TOKEN_SECRET_ID = os.environ.get("SLACK_TOKEN_SECRET_ID", "")
+FEISHU_TOKEN_SECRET_ID = os.environ.get("FEISHU_TOKEN_SECRET_ID", "")
+FEISHU_API_DOMAIN = os.environ.get("FEISHU_API_DOMAIN", "https://open.feishu.cn")
 AWS_REGION = os.environ.get("AWS_REGION", "us-west-2")
 LAMBDA_TIMEOUT_SECONDS = int(os.environ.get("LAMBDA_TIMEOUT_SECONDS", "600"))
 
@@ -86,6 +88,50 @@ def _get_slack_tokens():
         return data.get("botToken", ""), data.get("signingSecret", "")
     except (json.JSONDecodeError, TypeError):
         return raw, ""
+
+
+def _get_feishu_credentials():
+    """Return (app_id, app_secret) from Feishu secret."""
+    raw = _get_secret(FEISHU_TOKEN_SECRET_ID)
+    if not raw:
+        return "", ""
+    try:
+        data = json.loads(raw)
+        return data.get("appId", ""), data.get("appSecret", "")
+    except (json.JSONDecodeError, TypeError):
+        return "", ""
+
+
+_feishu_token_cache = {"token": "", "expires_at": 0}
+
+
+def _get_feishu_tenant_token():
+    """Get or refresh Feishu tenant_access_token (2h TTL, refresh 5 min early)."""
+    if _feishu_token_cache["token"] and time.time() < _feishu_token_cache["expires_at"] - 300:
+        return _feishu_token_cache["token"]
+
+    app_id, app_secret = _get_feishu_credentials()
+    if not app_id or not app_secret:
+        logger.error("Feishu app_id/app_secret not configured")
+        return ""
+
+    url = f"{FEISHU_API_DOMAIN}/open-apis/auth/v3/tenant_access_token/internal"
+    data = json.dumps({"app_id": app_id, "app_secret": app_secret}).encode()
+    req = urllib_request.Request(url, data=data, headers={"Content-Type": "application/json"})
+
+    try:
+        resp = urllib_request.urlopen(req, timeout=10)
+        result = json.loads(resp.read())
+        if result.get("code") == 0:
+            token = result["tenant_access_token"]
+            expire = result.get("expire", 7200)
+            _feishu_token_cache["token"] = token
+            _feishu_token_cache["expires_at"] = time.time() + expire
+            return token
+        logger.error("Feishu token error: %s", result.get("msg", ""))
+    except Exception as e:
+        logger.error("Failed to get Feishu tenant_access_token: %s", e)
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -406,6 +452,35 @@ def send_slack_message(channel_id, text, bot_token):
         logger.error("Failed to send Slack message to %s: %s", channel_id, e)
 
 
+def send_feishu_message(chat_id, text):
+    """Send a message via Feishu Bot API."""
+    token = _get_feishu_tenant_token()
+    if not token:
+        logger.error("No Feishu tenant_access_token available")
+        return
+
+    url = f"{FEISHU_API_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id"
+    MAX_FEISHU_TEXT_LEN = 20000
+
+    chunks = [text[i:i + MAX_FEISHU_TEXT_LEN]
+              for i in range(0, len(text), MAX_FEISHU_TEXT_LEN)] if len(text) > MAX_FEISHU_TEXT_LEN else [text]
+
+    for chunk in chunks:
+        data = json.dumps({
+            "receive_id": chat_id,
+            "msg_type": "text",
+            "content": json.dumps({"text": chunk}),
+        }).encode()
+        req = urllib_request.Request(url, data=data, headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Authorization": f"Bearer {token}",
+        })
+        try:
+            urllib_request.urlopen(req, timeout=10)
+        except Exception as e:
+            logger.error("Failed to send Feishu message to %s: %s", chat_id, e)
+
+
 def deliver_response(channel, channel_target, response_text):
     """Deliver a response to the user's channel."""
     response_text = _extract_text_from_content_blocks(response_text)
@@ -420,6 +495,8 @@ def deliver_response(channel, channel_target, response_text):
     elif channel == "slack":
         bot_token, _ = _get_slack_tokens()
         send_slack_message(channel_target, response_text, bot_token)
+    elif channel == "feishu":
+        send_feishu_message(channel_target, response_text)
     else:
         logger.warning("Unknown channel type: %s", channel)
 
