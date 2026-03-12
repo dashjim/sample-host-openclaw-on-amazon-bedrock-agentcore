@@ -327,13 +327,59 @@ cd tests/e2e && python -m pytest bot_test.py -v -k TestBrowserFeature  # browser
 # Get runtime status (via Starter Toolkit)
 agentcore status --agent openclaw_agent --verbose
 
-# Or via AWS CLI (runtime_id from cdk.json or .bedrock_agentcore.yaml)
-aws bedrock-agentcore get-runtime \
+# Get container-level status (openclawReady, proxyReady, uptime, logs)
+agentcore invoke '{"action":"status"}' -a openclaw_agent
+
+# Send test chat to trigger init + verify end-to-end
+agentcore invoke '{"action":"chat","userId":"test","actorId":"test:123","channel":"test","message":"hello"}' -a openclaw_agent
+
+# Stop a specific session (forces new container on next invocation)
+# IMPORTANT: update-agent-runtime changes env vars but does NOT replace running containers.
+# You must stop-session to force a fresh container with updated env vars.
+agentcore stop-session -a openclaw_agent -s <SESSION_ID>
+
+# Find session ID from Router Lambda logs
+aws logs filter-log-events --log-group-name /openclaw/lambda/router --region $CDK_DEFAULT_REGION \
+  --start-time $(python3 -c "import time; print(int((time.time()-3600)*1000))") \
+  --filter-pattern "session=ses_" --query 'events[-1].message' --output text
+
+# Update runtime config (env vars, image, subnets) — bypasses Starter Toolkit limitations
+aws bedrock-agentcore-control update-agent-runtime \
   --agent-runtime-id openclaw_agent-FMElB5ECU7 \
+  --role-arn "arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):role/openclaw-agentcore-execution-role-$CDK_DEFAULT_REGION" \
+  --agent-runtime-artifact '{"containerConfiguration":{"containerUri":"<ECR_URI>:<TAG>"}}' \
+  --network-configuration '{"networkMode":"VPC","networkModeConfig":{"subnets":["<SUBNET1>","<SUBNET2>"],"securityGroups":["<SG>"]}}' \
+  --environment-variables '{...}' \
   --region $CDK_DEFAULT_REGION
 
 # Check DynamoDB identity table
 aws dynamodb scan --table-name openclaw-identity --region $CDK_DEFAULT_REGION
+
+# Check Router Lambda errors (last 5 min)
+aws logs filter-log-events --log-group-name /openclaw/lambda/router --region $CDK_DEFAULT_REGION \
+  --start-time $(python3 -c "import time; print(int((time.time()-300)*1000))") \
+  --filter-pattern "ERROR" --query 'events[*].message' --output text
+
+# Check ECR images
+aws ecr describe-images --repository-name bedrock-agentcore-openclaw_agent --region $CDK_DEFAULT_REGION \
+  --query 'imageDetails[*].{tag:imageTags[0],size:imageSizeInBytes,pushed:imagePushedAt}' --output table
+```
+
+### Docker Build & Push (local)
+```bash
+# Build ARM64 image from current branch
+cd bridge && sudo docker build --platform linux/arm64 -t openclaw-bridge:latest .
+
+# Test locally before pushing
+sudo docker run --rm -d --name test -p 8080:8080 -e AWS_REGION=$CDK_DEFAULT_REGION openclaw-bridge:latest
+curl http://localhost:8080/ping   # should return {"status":"Healthy",...}
+sudo docker stop test
+
+# Login + push to ECR
+ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+aws ecr get-login-password --region $CDK_DEFAULT_REGION | sudo docker login --username AWS --password-stdin $ACCOUNT.dkr.ecr.$CDK_DEFAULT_REGION.amazonaws.com
+sudo docker tag openclaw-bridge:latest $ACCOUNT.dkr.ecr.$CDK_DEFAULT_REGION.amazonaws.com/bedrock-agentcore-openclaw_agent:local-build
+sudo docker push $ACCOUNT.dkr.ecr.$CDK_DEFAULT_REGION.amazonaws.com/bedrock-agentcore-openclaw_agent:local-build
 ```
 
 ## Key Configuration (cdk.json)
@@ -579,6 +625,80 @@ Never push to any remote (GitHub, GitLab, or otherwise) without explicit user co
 
 ### Planning vs Implementation
 When asked to create a plan, produce it concisely in ONE iteration. Do not endlessly revise or research unless asked. If the user says 'implement', move directly to code changes — do not re-plan. If a plan is approved, begin implementation immediately.
+
+## Adding a New Channel (Checklist)
+
+To add a new messaging channel (e.g., WhatsApp, Discord, LINE), follow the Feishu implementation as a reference:
+
+### 1. Secrets Manager (CDK: `security_stack.py`)
+- Add a new secret for the channel bot token/credentials
+- Export the secret name for cross-stack reference
+
+### 2. Router Lambda (`lambda/router/index.py`)
+- Add credential fetching function (e.g., `_get_feishu_credentials()`)
+- Add webhook validation function (e.g., `validate_feishu_webhook()`)
+- Add message sending function (e.g., `send_feishu_message()`)
+- Add progress notification function (e.g., `_feishu_progress_notify()`)
+- Add main handler function (e.g., `handle_feishu()`)
+- Wire into the Lambda handler: sync path (webhook validation + async dispatch) and async path (message processing)
+- Handle channel-specific features: event decryption (Feishu AES-256-CBC), signature verification, bot mention stripping (group chat), image download, etc.
+
+### 3. API Gateway Route (CDK: `router_stack.py`)
+- Add `POST /webhook/<channel>` route
+- Pass the new secret name as Lambda environment variable
+
+### 4. Cron Lambda (`lambda/cron/index.py`)
+- Add response delivery function for the new channel (e.g., `send_feishu_message()`)
+
+### 5. Setup Script (`scripts/setup-<channel>.sh`)
+- Interactive script: display webhook URL, prompt for credentials, store in Secrets Manager, add user to allowlist
+
+### 6. Tests (`lambda/router/test_<channel>.py`)
+- Webhook validation, event parsing, message sending, edge cases
+
+### Key design decisions:
+- **Webhook validation**: Each channel has its own signature/token verification. Fail-closed (reject if validation fails)
+- **Async dispatch**: Return 200 immediately to the webhook, self-invoke Lambda asynchronously for processing (prevents webhook timeouts)
+- **User ID format**: `<channel>:<platform_user_id>` (e.g., `feishu:ou_xxxx`, `telegram:123456`)
+- **Event encryption**: Some platforms (Feishu) encrypt webhook events. Decrypt in the handler using platform-provided keys. Use system libcrypto (ctypes) for AES to avoid native dependency issues across Lambda architectures
+
+## Deployment Gotchas (Learned the Hard Way)
+
+### Starter Toolkit + CDK Hybrid
+- **ECR repo naming**: Starter Toolkit creates repos with `bedrock-agentcore-` prefix (e.g., `bedrock-agentcore-openclaw_agent`). CDK IAM policies must include this pattern — mismatch causes "initialization exceeded 120s" (misleading error, actually ECR permission denied)
+- **`update-agent-runtime` does NOT replace running containers**: Env var changes only apply to NEW sessions. Always `agentcore stop-session` after updating runtime env vars
+- **Starter Toolkit `--local-build` skips CodeBuild**: Useful for pre-pushed images. Default mode always triggers CodeBuild which rebuilds and overwrites the image tag
+- **Starter Toolkit VPC subnet changes**: "Immutable" via `agentcore configure`, but actually mutable via direct `aws bedrock-agentcore-control update-agent-runtime` API
+- **CodeBuild Docker Hub rate limit**: Dockerfile must use `public.ecr.aws/docker/library/node:22-slim` instead of Docker Hub
+
+### VPC + Bedrock
+- **Cross-region inference profiles work through VPC endpoints**: `global.anthropic.claude-opus-4-6-v1` works fine through `bedrock-runtime` VPC endpoint (despite initial suspicion otherwise)
+- **Security group egress**: TCP 443 only is sufficient — DNS uses VPC internal resolver (not affected by SG)
+
+### Session Management
+- **Session ID is deterministic**: `ses_{userId}_{hash}` — same user always gets same session ID, so `stop-session` with the correct ID is essential after config changes
+- **Cold start timing**: VPC mode ~30-60s for ENI creation + image pull. First message triggers init (proxy + OpenClaw startup)
+
+## Git Worktree Guide
+
+This project uses git worktrees for parallel branch development:
+
+```bash
+# Current worktrees
+git worktree list
+
+# The deploy branch is checked out at ~/g-repo/openclaw-deploy (worktree)
+# The main repo is at ~/g-repo/sample-host-openclaw-on-amazon-bedrock-agentcore
+
+# When done with the deploy branch, merge to main and clean up:
+cd ~/g-repo/sample-host-openclaw-on-amazon-bedrock-agentcore
+git checkout main
+git merge deploy/starter-toolkit-hybrid
+git worktree remove ~/g-repo/openclaw-deploy   # removes worktree directory
+git branch -d deploy/starter-toolkit-hybrid     # delete branch if fully merged
+
+# Or keep the worktree for continued work — no cleanup needed
+```
 
 ## Project Context
 This is a Python/Node.js project (OpenClaw on AWS Bedrock AgentCore). Key components: Telegram bot, Slack Socket Mode, CDK infrastructure, Docker/ECR deployments, S3 workspace, per-user memory isolation. Subagents are OpenClaw-native running on the same AgentCore runtime — they are NOT separate Bedrock agents.
