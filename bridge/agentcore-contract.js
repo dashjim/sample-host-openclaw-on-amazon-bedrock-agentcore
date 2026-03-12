@@ -26,6 +26,7 @@ const {
   GetSecretValueCommand,
 } = require("@aws-sdk/client-secrets-manager");
 const workspaceSync = require("./workspace-sync");
+const cwLogger = require("./cloudwatch-logger");
 const agent = require("./lightweight-agent");
 const scopedCreds = require("./scoped-credentials");
 
@@ -660,6 +661,7 @@ async function init(userId, actorId, channel) {
     const namespace = actorId.replace(/:/g, "_");
     currentUserId = userId;
     currentNamespace = namespace;
+    await cwLogger.init(`${namespace}-${Date.now()}`);
 
     // Expose USER_ID so child processes (OpenClaw skill scripts) inherit it
     process.env.USER_ID = actorId;
@@ -1561,6 +1563,7 @@ process.on("SIGTERM", async () => {
     } catch {}
   }
 
+  await cwLogger.shutdown();
   console.log("[contract] Shutdown complete");
   process.exit(0);
 });
