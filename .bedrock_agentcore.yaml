@@ -37,11 +37,11 @@ agents:
     bedrock_agentcore:
       agent_id: openclaw_agent-FMElB5ECU7
       agent_arn: arn:aws:bedrock-agentcore:us-west-2:576186206185:runtime/openclaw_agent-FMElB5ECU7
-      agent_session_id: null
+      agent_session_id: df64dc33-1359-40ce-b147-ec1847f99386
     codebuild:
-      project_name: null
-      execution_role: null
-      source_bucket: null
+      project_name: bedrock-agentcore-openclaw_agent-builder
+      execution_role: arn:aws:iam::576186206185:role/AmazonBedrockAgentCoreSDKCodeBuild-us-west-2-fa79fb8b0d
+      source_bucket: bedrock-agentcore-codebuild-sources-576186206185-us-west-2
     memory:
       mode: STM_ONLY
       memory_id: openclaw_agent_mem-MLXNRV4Hpi

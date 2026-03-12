@@ -57,7 +57,6 @@ secrets_client = boto3.client("secretsmanager", region_name=AWS_REGION)
 s3_client = boto3.client("s3", region_name=AWS_REGION)
 
 USER_FILES_BUCKET = os.environ.get("USER_FILES_BUCKET", "")
-WARM_POOL_ENABLED = os.environ.get("WARM_POOL_ENABLED", "false").lower() == "true"
 
 # --- Token cache (survives across warm invocations, 15-min TTL) ---
 _SECRET_CACHE_TTL_SECONDS = 900  # 15 minutes
@@ -285,53 +284,6 @@ def resolve_user(channel, channel_user_id, display_name=""):
     return user_id, True
 
 
-def claim_warm_session():
-    """Try to claim a pre-warmed session from the warm pool (atomic pop).
-
-    Returns the runtime session ID if available, or None if pool is empty.
-    """
-    if not WARM_POOL_ENABLED:
-        return None
-
-    try:
-        resp = identity_table.query(
-            KeyConditionExpression="PK = :pk AND begins_with(SK, :sk_prefix)",
-            ExpressionAttributeValues={
-                ":pk": "WARMPOOL#available",
-                ":sk_prefix": "SESSION#",
-            },
-            Limit=1,
-        )
-        items = resp.get("Items", [])
-        if not items:
-            logger.info("Warm pool: empty, falling back to cold start")
-            return None
-
-        item = items[0]
-        session_sk = item["SK"]
-        runtime_session_id = item.get("runtimeSessionId", "")
-
-        # Atomic delete (claim) — if another Lambda claimed it first, this fails gracefully
-        try:
-            identity_table.delete_item(
-                Key={"PK": "WARMPOOL#available", "SK": session_sk},
-                ConditionExpression="attribute_exists(PK)",
-            )
-            logger.info(
-                "Warm pool: claimed pre-warmed session %s (created=%s)",
-                runtime_session_id,
-                item.get("createdAt", "unknown"),
-            )
-            return runtime_session_id
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                logger.info("Warm pool: session already claimed by another request")
-                return None
-            raise
-    except Exception as e:
-        logger.warning("Warm pool claim failed (non-fatal): %s", e)
-        return None
-
 
 def get_or_create_session(user_id):
     """Get or create a session ID for the user. Session IDs must be >= 33 chars."""
@@ -350,17 +302,11 @@ def get_or_create_session(user_id):
     except ClientError as e:
         logger.error("DynamoDB session lookup failed: %s", e)
 
-    # Try to claim a pre-warmed session from the warm pool
-    warm_session_id = claim_warm_session()
-    if warm_session_id:
-        session_id = warm_session_id
-        logger.info("Using pre-warmed session %s for user %s", session_id, user_id)
-    else:
-        # Cold start: create new session (>= 33 chars required by AgentCore)
-        session_id = f"ses_{user_id}_{uuid.uuid4().hex[:12]}"
-        if len(session_id) < 33:
-            session_id += "_" + uuid.uuid4().hex[: 33 - len(session_id)]
-        logger.info("Cold start: new session %s for user %s", session_id, user_id)
+    # Create new session (>= 33 chars required by AgentCore)
+    session_id = f"ses_{user_id}_{uuid.uuid4().hex[:12]}"
+    if len(session_id) < 33:
+        session_id += "_" + uuid.uuid4().hex[: 33 - len(session_id)]
+    logger.info("New session created: %s for user %s", session_id, user_id)
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     try:

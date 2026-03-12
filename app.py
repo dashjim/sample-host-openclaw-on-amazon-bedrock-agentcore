@@ -21,7 +21,6 @@ from stacks.security_stack import SecurityStack
 from stacks.agentcore_stack import AgentCoreStack
 from stacks.router_stack import RouterStack
 from stacks.cron_stack import CronStack
-from stacks.warmpool_stack import WarmPoolStack
 from stacks.observability_stack import ObservabilityStack
 from stacks.token_monitoring_stack import TokenMonitoringStack
 
@@ -88,18 +87,6 @@ cron_stack = CronStack(
     slack_token_secret_name=security_stack.channel_secrets["slack"].secret_name,
     cmk_arn=security_stack.cmk.key_arn,
     agentcore_execution_role=agentcore_stack.execution_role,
-    env=env,
-)
-
-# --- Warm Pool (pre-warmed AgentCore sessions) ---
-warmpool_stack = WarmPoolStack(
-    app,
-    "OpenClawWarmPool",
-    runtime_arn=agentcore_stack.runtime_arn,
-    runtime_endpoint_id=agentcore_stack.runtime_endpoint_id,
-    identity_table_name=_identity_table_name,
-    identity_table_arn=_identity_table_arn,
-    cmk_arn=security_stack.cmk.key_arn,
     env=env,
 )
 
