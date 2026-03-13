@@ -406,6 +406,41 @@ def send_slack_message(channel_id, text, bot_token):
         logger.error("Failed to send Slack message to %s: %s", channel_id, e)
 
 
+def send_feishu_message(receiver_id, text):
+    """Send a message via Feishu Bot API.
+
+    receiver_id can be an open_id (ou_xxx) or chat_id (oc_xxx).
+    The API receive_id_type is auto-detected from the prefix.
+    """
+    token = _get_feishu_tenant_token()
+    if not token:
+        logger.error("No Feishu tenant_access_token available")
+        return
+
+    id_type = "open_id" if receiver_id.startswith("ou_") else "chat_id"
+    url = f"{FEISHU_API_DOMAIN}/open-apis/im/v1/messages?receive_id_type={id_type}"
+    MAX_FEISHU_TEXT_LEN = 20000
+
+    chunks = [text[i:i + MAX_FEISHU_TEXT_LEN]
+              for i in range(0, len(text), MAX_FEISHU_TEXT_LEN)] if len(text) > MAX_FEISHU_TEXT_LEN else [text]
+
+    for chunk in chunks:
+        data = json.dumps({
+            "receive_id": receiver_id,
+            "msg_type": "text",
+            "content": json.dumps({"text": chunk}),
+        }).encode()
+        req = urllib_request.Request(url, data=data, headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Authorization": f"Bearer {token}",
+        })
+        try:
+            urllib_request.urlopen(req, timeout=10)
+        except Exception as e:
+            logger.error("Failed to send Feishu message to %s: %s", receiver_id, e)
+
+
+
 def deliver_response(channel, channel_target, response_text):
     """Deliver a response to the user's channel."""
     response_text = _extract_text_from_content_blocks(response_text)

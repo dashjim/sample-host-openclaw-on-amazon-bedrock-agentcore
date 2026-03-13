@@ -854,6 +854,79 @@ def _slack_progress_notify(channel_id, bot_token, stop_event, notify_after_s=30)
         )
 
 
+def send_feishu_message(chat_id, text):
+    """Send a message via Feishu Bot API."""
+    token = _get_feishu_tenant_token()
+    if not token:
+        logger.error("No Feishu tenant_access_token available")
+        return
+
+    url = f"{FEISHU_API_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id"
+    MAX_FEISHU_TEXT_LEN = 20000
+
+    chunks = [text[i:i + MAX_FEISHU_TEXT_LEN]
+              for i in range(0, len(text), MAX_FEISHU_TEXT_LEN)] if len(text) > MAX_FEISHU_TEXT_LEN else [text]
+
+    for chunk in chunks:
+        data = json.dumps({
+            "receive_id": chat_id,
+            "msg_type": "text",
+            "content": json.dumps({"text": chunk}),
+        }).encode()
+        req = urllib_request.Request(url, data=data, headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Authorization": f"Bearer {token}",
+        })
+        try:
+            urllib_request.urlopen(req, timeout=10)
+        except Exception as e:
+            logger.error("Failed to send Feishu message to %s: %s", chat_id, e)
+
+
+def _feishu_progress_notify(chat_id, stop_event, notify_after_s=30):
+    """Send a one-time progress message to Feishu if the request takes longer than notify_after_s."""
+    if not stop_event.wait(timeout=notify_after_s):
+        send_feishu_message(chat_id, "\u23f3 正在处理你的请求，可能需要几分钟。完成后会发送完整回复。")
+
+
+def _download_feishu_image(content_str, msg_type):
+    """Download image from Feishu API using image_key.
+
+    Returns (image_bytes, content_type, filename) or (None, None, None).
+    """
+    if msg_type != "image":
+        return None, None, None
+
+    try:
+        content = json.loads(content_str) if isinstance(content_str, str) else content_str
+        image_key = content.get("image_key", "")
+    except (json.JSONDecodeError, TypeError):
+        return None, None, None
+
+    if not image_key:
+        return None, None, None
+
+    token = _get_feishu_tenant_token()
+    if not token:
+        return None, None, None
+
+    url = f"{FEISHU_API_DOMAIN}/open-apis/im/v1/images/{image_key}"
+    req = urllib_request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        resp = urllib_request.urlopen(req, timeout=30)
+        content_type = resp.headers.get("Content-Type", "image/jpeg")
+        image_bytes = resp.read(4 * 1024 * 1024)  # 4MB max
+        if content_type not in ALLOWED_IMAGE_TYPES:
+            logger.warning("Feishu image type %s not in allowed list", content_type)
+            return None, None, None
+        ext = content_type.split("/")[-1].split(";")[0]
+        filename = f"feishu_{image_key}.{ext}"
+        return image_bytes, content_type, filename
+    except Exception as e:
+        logger.error("Failed to download Feishu image %s: %s", image_key, e)
+        return None, None, None
+
+
 # ---------------------------------------------------------------------------
 # Image upload helpers
 # ---------------------------------------------------------------------------
