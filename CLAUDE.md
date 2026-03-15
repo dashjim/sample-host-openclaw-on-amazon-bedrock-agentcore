@@ -303,7 +303,7 @@ Config file: `.bedrock_agentcore.yaml` (in repo root, on `deploy/starter-toolkit
 docker build --platform linux/arm64 -t openclaw-bridge:v${TAG} bridge/
 
 # 2. Push to ECR (starter toolkit ECR repo, NOT the CDK one)
-ECR_REPO=576186206185.dkr.ecr.us-west-2.amazonaws.com/bedrock-agentcore-openclaw_agent
+ECR_REPO=<ACCOUNT_ID>.dkr.ecr.us-west-2.amazonaws.com/bedrock-agentcore-openclaw_agent
 aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin $ECR_REPO
 docker tag openclaw-bridge:v${TAG} ${ECR_REPO}:v${TAG}
 docker push ${ECR_REPO}:v${TAG}
@@ -312,33 +312,33 @@ docker push ${ECR_REPO}:v${TAG}
 #    CRITICAL: update-agent-runtime is a FULL REPLACE — any field you omit gets cleared!
 #    You MUST include --environment-variables every time, or all env vars will be wiped.
 aws bedrock-agentcore-control update-agent-runtime \
-  --agent-runtime-id openclaw_agent-FMElB5ECU7 \
+  --agent-runtime-id <RUNTIME_ID> \
   --agent-runtime-artifact "{\"containerConfiguration\":{\"containerUri\":\"${ECR_REPO}:v${TAG}\"}}" \
-  --role-arn "arn:aws:iam::576186206185:role/openclaw-agentcore-execution-role-us-west-2" \
-  --network-configuration '{"networkMode":"VPC","networkModeConfig":{"securityGroups":["sg-03bb6e6f7149141dd"],"subnets":["subnet-01b1643518072f0b3","subnet-04202e25fbbbb79b6"]}}' \
+  --role-arn "arn:aws:iam::<ACCOUNT_ID>:role/openclaw-agentcore-execution-role-us-west-2" \
+  --network-configuration '{"networkMode":"VPC","networkModeConfig":{"securityGroups":["<SECURITY_GROUP_ID>"],"subnets":["<PRIVATE_SUBNET_1>","<PRIVATE_SUBNET_2>"]}}' \
   --environment-variables '{
     "AWS_REGION":"us-west-2",
-    "BEDROCK_AGENTCORE_MEMORY_ID":"openclaw_agent_mem-MLXNRV4Hpi",
+    "BEDROCK_AGENTCORE_MEMORY_ID":"<MEMORY_ID>",
     "BEDROCK_AGENTCORE_MEMORY_NAME":"openclaw_agent_mem",
     "BEDROCK_MODEL_ID":"global.anthropic.claude-opus-4-6-v1",
-    "COGNITO_CLIENT_ID":"3gmaatc5s1em9c8vn4a1kjaie9",
+    "COGNITO_CLIENT_ID":"<COGNITO_CLIENT_ID>",
     "COGNITO_PASSWORD_SECRET_ID":"openclaw/cognito-password-secret",
-    "COGNITO_USER_POOL_ID":"us-west-2_I6GRBMuAm",
-    "CRON_LAMBDA_ARN":"arn:aws:lambda:us-west-2:576186206185:function:openclaw-cron-executor",
+    "COGNITO_USER_POOL_ID":"<COGNITO_USER_POOL_ID>",
+    "CRON_LAMBDA_ARN":"arn:aws:lambda:us-west-2:<ACCOUNT_ID>:function:openclaw-cron-executor",
     "CRON_LEAD_TIME_MINUTES":"5",
-    "EVENTBRIDGE_ROLE_ARN":"arn:aws:iam::576186206185:role/openclaw-cron-scheduler-role-us-west-2",
+    "EVENTBRIDGE_ROLE_ARN":"arn:aws:iam::<ACCOUNT_ID>:role/openclaw-cron-scheduler-role-us-west-2",
     "EVENTBRIDGE_SCHEDULE_GROUP":"openclaw-cron",
-    "EXECUTION_ROLE_ARN":"arn:aws:iam::576186206185:role/openclaw-agentcore-execution-role-us-west-2",
+    "EXECUTION_ROLE_ARN":"arn:aws:iam::<ACCOUNT_ID>:role/openclaw-agentcore-execution-role-us-west-2",
     "GATEWAY_TOKEN_SECRET_ID":"openclaw/gateway-token",
     "IDENTITY_TABLE_NAME":"openclaw-identity",
-    "S3_USER_FILES_BUCKET":"openclaw-user-files-576186206185-us-west-2",
+    "S3_USER_FILES_BUCKET":"openclaw-user-files-<ACCOUNT_ID>-us-west-2",
     "SUBAGENT_BEDROCK_MODEL_ID":"global.anthropic.claude-opus-4-6-v1"
   }' \
   --region us-west-2
 
 # 4. Verify update completed
 aws bedrock-agentcore-control get-agent-runtime \
-  --agent-runtime-id openclaw_agent-FMElB5ECU7 --region us-west-2 \
+  --agent-runtime-id <RUNTIME_ID> --region us-west-2 \
   --query '{status:status,version:agentRuntimeVersion,image:agentRuntimeArtifact.containerConfiguration.containerUri}'
 
 # 5. New sessions will use the new image automatically (per-user idle termination)
@@ -376,7 +376,7 @@ aws dynamodb query --table-name openclaw-identity --region us-west-2 \
 
 # 2. Stop the session via data plane API
 aws bedrock-agentcore stop-runtime-session \
-  --agent-runtime-arn "arn:aws:bedrock-agentcore:us-west-2:576186206185:runtime/openclaw_agent-FMElB5ECU7" \
+  --agent-runtime-arn "arn:aws:bedrock-agentcore:us-west-2:<ACCOUNT_ID>:runtime/<RUNTIME_ID>" \
   --runtime-session-id "<sessionId>" \
   --region us-west-2
 ```
@@ -384,10 +384,10 @@ aws bedrock-agentcore stop-runtime-session \
 The session receives SIGTERM, saves workspace to S3, and shuts down. The next message from that user triggers a new session with the latest image.
 
 #### Key IDs (us-west-2)
-- **Runtime ID**: `openclaw_agent-FMElB5ECU7`
-- **Runtime ARN**: `arn:aws:bedrock-agentcore:us-west-2:576186206185:runtime/openclaw_agent-FMElB5ECU7`
-- **ECR Repo**: `576186206185.dkr.ecr.us-west-2.amazonaws.com/bedrock-agentcore-openclaw_agent`
-- **Execution Role**: `arn:aws:iam::576186206185:role/openclaw-agentcore-execution-role-us-west-2`
+- **Runtime ID**: `<RUNTIME_ID>`
+- **Runtime ARN**: `arn:aws:bedrock-agentcore:us-west-2:<ACCOUNT_ID>:runtime/<RUNTIME_ID>`
+- **ECR Repo**: `<ACCOUNT_ID>.dkr.ecr.us-west-2.amazonaws.com/bedrock-agentcore-openclaw_agent`
+- **Execution Role**: `arn:aws:iam::<ACCOUNT_ID>:role/openclaw-agentcore-execution-role-us-west-2`
 - **Control Plane API**: `aws bedrock-agentcore-control` (get/update/list runtime, endpoints, sessions)
 - **Data Plane API**: `aws bedrock-agentcore` (invoke-agent-runtime, stop-runtime-session)
 
@@ -449,7 +449,7 @@ aws logs filter-log-events --log-group-name /openclaw/lambda/router --region $CD
 
 # Update runtime config (env vars, image, subnets) — bypasses Starter Toolkit limitations
 aws bedrock-agentcore-control update-agent-runtime \
-  --agent-runtime-id openclaw_agent-FMElB5ECU7 \
+  --agent-runtime-id <RUNTIME_ID> \
   --role-arn "arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):role/openclaw-agentcore-execution-role-$CDK_DEFAULT_REGION" \
   --agent-runtime-artifact '{"containerConfiguration":{"containerUri":"<ECR_URI>:<TAG>"}}' \
   --network-configuration '{"networkMode":"VPC","networkModeConfig":{"subnets":["<SUBNET1>","<SUBNET2>"],"securityGroups":["<SG>"]}}' \
