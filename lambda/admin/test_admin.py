@@ -362,3 +362,97 @@ class TestUserManagement:
         assert resp["statusCode"] == 200
         delete_calls = mock_dynamodb.delete_item.call_args_list
         assert len(delete_calls) >= 2  # USER# CHANNEL# + CHANNEL# PROFILE
+
+
+class TestFileManagement:
+    def test_list_namespaces(self):
+        from index import handler
+
+        with patch("index.s3_client") as mock_s3:
+            mock_s3.list_objects_v2.return_value = {
+                "CommonPrefixes": [
+                    {"Prefix": "telegram_123/"},
+                    {"Prefix": "slack_456/"},
+                ],
+            }
+            event = {
+                "requestContext": {
+                    "http": {"method": "GET", "path": "/api/files"},
+                    "authorizer": {"jwt": {"claims": {"sub": "admin-1"}}},
+                },
+                "headers": {},
+            }
+            resp = handler(event, None)
+            assert resp["statusCode"] == 200
+            body = json.loads(resp["body"])
+            assert len(body["namespaces"]) == 2
+            assert body["namespaces"][0] == "telegram_123"
+
+    def test_list_files_in_namespace(self):
+        from index import handler
+
+        with patch("index.s3_client") as mock_s3:
+            mock_s3.list_objects_v2.return_value = {
+                "Contents": [
+                    {"Key": "telegram_123/.openclaw/config.json", "Size": 256,
+                     "LastModified": "2026-03-01T00:00:00Z"},
+                    {"Key": "telegram_123/notes.md", "Size": 1024,
+                     "LastModified": "2026-03-15T00:00:00Z"},
+                ],
+            }
+            event = {
+                "requestContext": {
+                    "http": {"method": "GET", "path": "/api/files/telegram_123"},
+                    "authorizer": {"jwt": {"claims": {"sub": "admin-1"}}},
+                },
+                "headers": {},
+            }
+            resp = handler(event, None)
+            assert resp["statusCode"] == 200
+            body = json.loads(resp["body"])
+            assert len(body["files"]) == 2
+
+    def test_path_traversal_rejected(self):
+        from index import handler
+
+        event = {
+            "requestContext": {
+                "http": {"method": "GET", "path": "/api/files/telegram_123/../slack_456/secret"},
+                "authorizer": {"jwt": {"claims": {"sub": "admin-1"}}},
+            },
+            "headers": {},
+        }
+        resp = handler(event, None)
+        assert resp["statusCode"] == 400
+
+    def test_invalid_namespace_rejected(self):
+        from index import handler
+
+        event = {
+            "requestContext": {
+                "http": {"method": "GET", "path": "/api/files/../../etc"},
+                "authorizer": {"jwt": {"claims": {"sub": "admin-1"}}},
+            },
+            "headers": {},
+        }
+        resp = handler(event, None)
+        assert resp["statusCode"] == 400
+
+    def test_delete_file(self):
+        from index import handler
+
+        with patch("index.s3_client") as mock_s3:
+            event = {
+                "requestContext": {
+                    "http": {"method": "DELETE",
+                             "path": "/api/files/telegram_123/.openclaw/old-skill.json"},
+                    "authorizer": {"jwt": {"claims": {"sub": "admin-1"}}},
+                },
+                "headers": {},
+            }
+            resp = handler(event, None)
+            assert resp["statusCode"] == 200
+            mock_s3.delete_object.assert_called_once_with(
+                Bucket="test-bucket",
+                Key="telegram_123/.openclaw/old-skill.json",
+            )

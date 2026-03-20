@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -531,6 +532,145 @@ def _handle_delete_allowlist(event):
 
     _audit_log(admin_sub, "REMOVE_ALLOWLIST", channel_key)
     return _json_response(200, {"message": f"Removed {channel_key} from allowlist"})
+
+
+# ---- File Management ----
+
+_VALID_NAMESPACE = re.compile(r"^[a-zA-Z0-9_-]+$")
+_TEXT_EXTENSIONS = {".md", ".json", ".txt", ".js", ".ts", ".py", ".yaml", ".yml",
+                    ".toml", ".cfg", ".ini", ".sh", ".html", ".css", ".xml", ".csv"}
+
+
+def _validate_namespace(ns):
+    return bool(_VALID_NAMESPACE.match(ns))
+
+
+def _validate_path(path):
+    return ".." not in path.split("/")
+
+
+@route("GET", "/api/files")
+def _handle_list_namespaces(event):
+    """GET /api/files — list all user namespaces."""
+    qs = event.get("queryParams", {})
+    continuation = qs.get("nextToken")
+
+    params = {"Bucket": S3_USER_FILES_BUCKET, "Delimiter": "/"}
+    if continuation:
+        params["ContinuationToken"] = continuation
+
+    resp = s3_client.list_objects_v2(**params)
+    namespaces = [
+        p["Prefix"].rstrip("/") for p in resp.get("CommonPrefixes", [])
+    ]
+
+    result = {"namespaces": namespaces}
+    if resp.get("NextContinuationToken"):
+        result["nextToken"] = resp["NextContinuationToken"]
+    return _json_response(200, result)
+
+
+@route("GET", "/api/files/{namespace}")
+def _handle_list_files(event):
+    """GET /api/files/{namespace} — list files in a namespace."""
+    namespace = event["pathParameters"]["namespace"]
+    if not _validate_namespace(namespace):
+        return _json_response(400, {"error": "Invalid namespace"})
+
+    qs = event.get("queryParams", {})
+    prefix = qs.get("prefix", "")  # Optional sub-path
+    continuation = qs.get("nextToken")
+    limit = min(int(qs.get("limit", "100")), 1000)
+
+    s3_prefix = f"{namespace}/{prefix}" if prefix else f"{namespace}/"
+    params = {
+        "Bucket": S3_USER_FILES_BUCKET,
+        "Prefix": s3_prefix,
+        "MaxKeys": limit,
+    }
+    if continuation:
+        params["ContinuationToken"] = continuation
+
+    resp = s3_client.list_objects_v2(**params)
+    files = []
+    for obj in resp.get("Contents", []):
+        key = obj["Key"]
+        rel_path = key[len(f"{namespace}/"):]  # Relative to namespace
+        if not rel_path:
+            continue
+        files.append({
+            "path": rel_path,
+            "size": obj.get("Size", 0),
+            "lastModified": obj.get("LastModified", ""),
+        })
+
+    result = {"files": files}
+    if resp.get("NextContinuationToken"):
+        result["nextToken"] = resp["NextContinuationToken"]
+    return _json_response(200, result)
+
+
+@route("GET", "/api/files/{namespace}/{path+}")
+def _handle_get_file(event):
+    """GET /api/files/{namespace}/{path+} — get file content or presigned URL."""
+    namespace = event["pathParameters"]["namespace"]
+    file_path = event["pathParameters"]["path"]
+
+    if not _validate_namespace(namespace) or not _validate_path(file_path):
+        return _json_response(400, {"error": "Invalid path"})
+
+    s3_key = f"{namespace}/{file_path}"
+    ext = os.path.splitext(file_path)[1].lower()
+
+    try:
+        if ext in _TEXT_EXTENSIONS:
+            resp = s3_client.get_object(Bucket=S3_USER_FILES_BUCKET, Key=s3_key)
+            size = resp.get("ContentLength", 0)
+            if size > 1_048_576:  # 1 MB
+                url = s3_client.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": S3_USER_FILES_BUCKET, "Key": s3_key},
+                    ExpiresIn=300,
+                )
+                return _json_response(200, {"presignedUrl": url, "size": size})
+            content = resp["Body"].read().decode("utf-8", errors="replace")
+            return _json_response(200, {"content": content, "size": size})
+        else:
+            # Binary file — return presigned URL
+            head = s3_client.head_object(Bucket=S3_USER_FILES_BUCKET, Key=s3_key)
+            url = s3_client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": S3_USER_FILES_BUCKET, "Key": s3_key},
+                ExpiresIn=300,
+            )
+            return _json_response(200, {
+                "presignedUrl": url, "size": head.get("ContentLength", 0),
+            })
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+            return _json_response(404, {"error": "File not found"})
+        raise
+
+
+@route("DELETE", "/api/files/{namespace}/{path+}")
+def _handle_delete_file(event):
+    """DELETE /api/files/{namespace}/{path+} — delete a file."""
+    namespace = event["pathParameters"]["namespace"]
+    file_path = event["pathParameters"]["path"]
+
+    if not _validate_namespace(namespace) or not _validate_path(file_path):
+        return _json_response(400, {"error": "Invalid path"})
+
+    s3_key = f"{namespace}/{file_path}"
+    try:
+        s3_client.delete_object(Bucket=S3_USER_FILES_BUCKET, Key=s3_key)
+    except ClientError as e:
+        logger.error("Failed to delete S3 object %s: %s", s3_key, e)
+        return _json_response(500, {"error": "Failed to delete file"})
+
+    admin_sub = _get_admin_sub(event)
+    _audit_log(admin_sub, "DELETE_FILE", s3_key)
+    return _json_response(200, {"message": f"Deleted {file_path}"})
 
 
 def _match_route(method, path):
