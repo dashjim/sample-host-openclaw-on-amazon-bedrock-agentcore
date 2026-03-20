@@ -4,6 +4,7 @@ import logging
 import os
 import time
 import urllib.parse
+import urllib.request
 
 import boto3
 from botocore.exceptions import ClientError
@@ -85,6 +86,19 @@ def _audit_log(admin_sub, action, target, detail=""):
     )
 
 
+# ---- Route Dispatch ----
+
+ROUTES = {}
+
+
+def route(method, path):
+    """Decorator to register a route handler."""
+    def decorator(fn):
+        ROUTES[(method, path)] = fn
+        return fn
+    return decorator
+
+
 # ---- Stats ----
 
 def _handle_get_stats(event):
@@ -129,21 +143,125 @@ def _handle_get_stats(event):
     })
 
 
-# ---- Route Dispatch ----
-
-ROUTES = {}
-
-
-def route(method, path):
-    """Decorator to register a route handler."""
-    def decorator(fn):
-        ROUTES[(method, path)] = fn
-        return fn
-    return decorator
-
-
 # Register stats route
 route("GET", "/api/stats")(_handle_get_stats)
+
+
+# ---- Channel Management ----
+
+SUPPORTED_CHANNELS = {"telegram", "slack", "feishu"}
+
+
+@route("GET", "/api/channels")
+def _handle_get_channels(event):
+    """GET /api/channels — list all channels with config status and webhook URLs."""
+    channels = []
+    for name in SUPPORTED_CHANNELS:
+        sid = CHANNEL_SECRET_IDS.get(name, "")
+        val = _get_secret(sid)
+        configured = bool(val) and len(val) != _PLACEHOLDER_LEN
+        channels.append({
+            "name": name,
+            "configured": configured,
+            "webhookUrl": f"{ROUTER_API_URL}webhook/{name}" if ROUTER_API_URL else "",
+        })
+    return _json_response(200, {"channels": channels})
+
+
+@route("PUT", "/api/channels/{channel}")
+def _handle_put_channel(event):
+    """PUT /api/channels/{channel} — update channel credentials."""
+    channel = event["pathParameters"]["channel"]
+    if channel not in SUPPORTED_CHANNELS:
+        return _json_response(400, {"error": f"Unknown channel: {channel}"})
+
+    sid = CHANNEL_SECRET_IDS.get(channel)
+    if not sid:
+        return _json_response(400, {"error": f"No secret configured for {channel}"})
+
+    body = event["parsedBody"]
+
+    # Build secret value based on channel type
+    if channel == "telegram":
+        secret_val = body.get("botToken", "")
+    elif channel == "slack":
+        secret_val = json.dumps({
+            "botToken": body.get("botToken", ""),
+            "signingSecret": body.get("signingSecret", ""),
+        })
+    elif channel == "feishu":
+        secret_val = json.dumps({
+            "appId": body.get("appId", ""),
+            "appSecret": body.get("appSecret", ""),
+            "verificationToken": body.get("verificationToken", ""),
+            "encryptKey": body.get("encryptKey", ""),
+        })
+    else:
+        secret_val = json.dumps(body)
+
+    try:
+        secrets_client.put_secret_value(SecretId=sid, SecretString=secret_val)
+        # Invalidate cache
+        _secret_cache.pop(sid, None)
+    except ClientError as e:
+        logger.error("Failed to update secret for %s: %s", channel, e)
+        return _json_response(500, {"error": "Failed to update credentials"})
+
+    admin_sub = _get_admin_sub(event)
+    _audit_log(admin_sub, "UPDATE_CHANNEL", channel)
+    return _json_response(200, {"message": f"{channel} credentials updated"})
+
+
+@route("DELETE", "/api/channels/{channel}")
+def _handle_delete_channel(event):
+    """DELETE /api/channels/{channel} — reset credentials to placeholder."""
+    channel = event["pathParameters"]["channel"]
+    if channel not in SUPPORTED_CHANNELS:
+        return _json_response(400, {"error": f"Unknown channel: {channel}"})
+
+    sid = CHANNEL_SECRET_IDS.get(channel)
+    if not sid:
+        return _json_response(400, {"error": f"No secret configured for {channel}"})
+
+    placeholder = "x" * _PLACEHOLDER_LEN
+    try:
+        secrets_client.put_secret_value(SecretId=sid, SecretString=placeholder)
+        _secret_cache.pop(sid, None)
+    except ClientError as e:
+        logger.error("Failed to reset secret for %s: %s", channel, e)
+        return _json_response(500, {"error": "Failed to reset credentials"})
+
+    admin_sub = _get_admin_sub(event)
+    _audit_log(admin_sub, "RESET_CHANNEL", channel)
+    return _json_response(200, {"message": f"{channel} credentials reset"})
+
+
+@route("POST", "/api/channels/telegram/webhook")
+def _handle_register_telegram_webhook(event):
+    """POST /api/channels/telegram/webhook — register Telegram webhook."""
+    token = _get_secret(TELEGRAM_SECRET_ID)
+    if not token or len(token) == _PLACEHOLDER_LEN:
+        return _json_response(400, {"error": "Telegram bot token not configured"})
+
+    webhook_secret = _get_secret(WEBHOOK_SECRET_ID)
+    webhook_url = f"{ROUTER_API_URL}webhook/telegram"
+
+    url = (
+        f"https://api.telegram.org/bot{token}/setWebhook"
+        f"?url={urllib.parse.quote(webhook_url, safe='')}"
+        f"&secret_token={urllib.parse.quote(webhook_secret, safe='')}"
+    )
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode())
+    except Exception as e:
+        logger.error("Telegram setWebhook failed: %s", e)
+        return _json_response(502, {"error": f"Telegram API error: {e}"})
+
+    admin_sub = _get_admin_sub(event)
+    _audit_log(admin_sub, "REGISTER_WEBHOOK", "telegram")
+    return _json_response(200, {"telegramResponse": result})
 
 
 def _match_route(method, path):
