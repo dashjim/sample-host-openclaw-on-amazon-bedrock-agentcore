@@ -97,6 +97,16 @@ fi
 export CDK_DEFAULT_ACCOUNT="$ACCOUNT"
 export CDK_DEFAULT_REGION="$REGION"
 
+# Load local env overrides (not committed — see .env.deploy.example)
+ENV_DEPLOY_FILE="$PROJECT_DIR/.env.deploy"
+if [ -f "$ENV_DEPLOY_FILE" ]; then
+  echo "  Loading overrides from .env.deploy"
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_DEPLOY_FILE"
+  set +a
+fi
+
 # Agentcore CLI path
 AGENTCORE_CLI="${AGENTCORE_CLI:-agentcore}"
 if ! command -v "$AGENTCORE_CLI" &>/dev/null; then
@@ -175,10 +185,12 @@ read_cdk_outputs() {
     --query "Stacks[0].Outputs[?contains(OutputKey,'IdentityPoolEC8A1A0D')].OutputValue" \
     --output text)
 
-  COGNITO_CLIENT_ID=$(aws cloudformation describe-stacks \
-    --stack-name OpenClawSecurity --region "$REGION" \
-    --query "Stacks[0].Outputs[?contains(OutputKey,'IdentityPoolProxyClient')].OutputValue" \
-    --output text)
+  # Cognito Client ID is not exported as a stack output — look it up from the User Pool
+  if [ -z "${COGNITO_CLIENT_ID:-}" ]; then
+    COGNITO_CLIENT_ID=$(aws cognito-idp list-user-pool-clients \
+      --user-pool-id "$COGNITO_USER_POOL_ID" --region "$REGION" \
+      --query "UserPoolClients[0].ClientId" --output text 2>/dev/null || echo "")
+  fi
 
   COGNITO_PASSWORD_SECRET_ID="openclaw/cognito-password-secret"
 
@@ -187,19 +199,41 @@ read_cdk_outputs() {
     --query "Stacks[0].Outputs[?contains(OutputKey,'SecretsCmk')].OutputValue" \
     --output text)
 
-  # Read config values from cdk.json
-  DEFAULT_MODEL_ID=$(python3 -c "import json; print(json.load(open('$PROJECT_DIR/cdk.json'))['context'].get('default_model_id','global.anthropic.claude-opus-4-6-v1'))")
-  SUBAGENT_MODEL_ID=$(python3 -c "import json; print(json.load(open('$PROJECT_DIR/cdk.json'))['context'].get('subagent_model_id',''))")
+  # Read config values from cdk.json (env overrides take precedence)
+  DEFAULT_MODEL_ID="${BEDROCK_MODEL_ID:-$(python3 -c "import json; print(json.load(open('$PROJECT_DIR/cdk.json'))['context'].get('default_model_id','global.anthropic.claude-opus-4-6-v1'))")}"
+  SUBAGENT_MODEL_ID="${SUBAGENT_BEDROCK_MODEL_ID:-$(python3 -c "import json; print(json.load(open('$PROJECT_DIR/cdk.json'))['context'].get('subagent_model_id',''))")}"
   IMAGE_VERSION=$(python3 -c "import json; print(json.load(open('$PROJECT_DIR/cdk.json'))['context'].get('image_version','1'))")
   WORKSPACE_SYNC_MS=$(python3 -c "import json; print(int(json.load(open('$PROJECT_DIR/cdk.json'))['context'].get('workspace_sync_interval_seconds',300))*1000)")
   CRON_LEAD_TIME=$(python3 -c "import json; print(json.load(open('$PROJECT_DIR/cdk.json'))['context'].get('cron_lead_time_minutes',5))")
   SESSION_IDLE=$(python3 -c "import json; print(json.load(open('$PROJECT_DIR/cdk.json'))['context'].get('session_idle_timeout',1800))")
   SESSION_MAX=$(python3 -c "import json; print(json.load(open('$PROJECT_DIR/cdk.json'))['context'].get('session_max_lifetime',28800))")
 
+  # Browser identifier (from CDK stack output, overridable via .env.deploy)
+  if [ -z "${BROWSER_IDENTIFIER:-}" ]; then
+    BROWSER_IDENTIFIER=$(aws cloudformation describe-stacks \
+      --stack-name OpenClawAgentCore --region "$REGION" \
+      --query "Stacks[0].Outputs[?OutputKey=='BrowserIdentifier'].OutputValue" \
+      --output text 2>/dev/null || echo "")
+    [ "$BROWSER_IDENTIFIER" = "None" ] && BROWSER_IDENTIFIER=""
+  fi
+
+  # Memory (from .bedrock_agentcore.yaml, overridable via .env.deploy)
+  if [ -z "${BEDROCK_AGENTCORE_MEMORY_ID:-}" ]; then
+    BEDROCK_AGENTCORE_MEMORY_ID=$(python3 -c "
+import yaml
+with open('$PROJECT_DIR/.bedrock_agentcore.yaml') as f:
+    cfg = yaml.safe_load(f)
+print(cfg.get('agents',{}).get('openclaw_agent',{}).get('memory',{}).get('memory_id',''))
+" 2>/dev/null || echo "")
+  fi
+  BEDROCK_AGENTCORE_MEMORY_NAME="${BEDROCK_AGENTCORE_MEMORY_NAME:-openclaw_agent_mem}"
+
   echo "  Execution Role: $EXECUTION_ROLE_ARN"
   echo "  Security Group: $SECURITY_GROUP_ID"
   echo "  Subnets:        $PRIVATE_SUBNET_IDS"
   echo "  S3 Bucket:      $USER_FILES_BUCKET"
+  echo "  Browser:        ${BROWSER_IDENTIFIER:-(disabled)}"
+  echo "  Memory ID:      ${BEDROCK_AGENTCORE_MEMORY_ID:-(none)}"
 }
 
 # --- Check ARM64 build capability (for local-build mode) ---
@@ -228,20 +262,27 @@ phase2_toolkit() {
   read_cdk_outputs
 
   # Configure the agent (creates/updates .bedrock_agentcore.yaml)
-  echo "--- Configuring agent ---"
-  "$AGENTCORE_CLI" configure \
-    --name openclaw_agent \
-    --entrypoint bridge/agentcore-contract.js \
-    --execution-role "$EXECUTION_ROLE_ARN" \
-    --region "$REGION" \
-    --vpc \
-    --subnets "$PRIVATE_SUBNET_IDS" \
-    --security-groups "$SECURITY_GROUP_ID" \
-    --idle-timeout "$SESSION_IDLE" \
-    --max-lifetime "$SESSION_MAX" \
-    --deployment-type container \
-    --language typescript \
-    --non-interactive
+  # Only run configure if .bedrock_agentcore.yaml doesn't exist yet.
+  # Re-running configure overwrites source_path (expands to repo root),
+  # breaking the Docker build context which must point to bridge/.
+  if [ ! -f "$PROJECT_DIR/.bedrock_agentcore.yaml" ]; then
+    echo "--- Configuring agent (first time) ---"
+    "$AGENTCORE_CLI" configure \
+      --name openclaw_agent \
+      --entrypoint bridge/agentcore-contract.js \
+      --execution-role "$EXECUTION_ROLE_ARN" \
+      --region "$REGION" \
+      --vpc \
+      --subnets "$PRIVATE_SUBNET_IDS" \
+      --security-groups "$SECURITY_GROUP_ID" \
+      --idle-timeout "$SESSION_IDLE" \
+      --max-lifetime "$SESSION_MAX" \
+      --deployment-type container \
+      --language typescript \
+      --non-interactive
+  else
+    echo "--- Using existing .bedrock_agentcore.yaml ---"
+  fi
 
   # Fix: agentcore configure expands source_path to project root, but our
   # Dockerfile COPY commands expect paths relative to bridge/. Patch it back.
@@ -287,7 +328,10 @@ phase2_toolkit() {
     --env "EVENTBRIDGE_ROLE_ARN=arn:aws:iam::${ACCOUNT}:role/openclaw-cron-scheduler-role-${REGION}" \
     --env "IDENTITY_TABLE_NAME=openclaw-identity" \
     --env "CRON_LEAD_TIME_MINUTES=$CRON_LEAD_TIME" \
-    --env "SUBAGENT_BEDROCK_MODEL_ID=$SUBAGENT_MODEL_ID"
+    --env "SUBAGENT_BEDROCK_MODEL_ID=$SUBAGENT_MODEL_ID" \
+    ${BEDROCK_AGENTCORE_MEMORY_ID:+--env "BEDROCK_AGENTCORE_MEMORY_ID=$BEDROCK_AGENTCORE_MEMORY_ID"} \
+    ${BEDROCK_AGENTCORE_MEMORY_NAME:+--env "BEDROCK_AGENTCORE_MEMORY_NAME=$BEDROCK_AGENTCORE_MEMORY_NAME"} \
+    ${BROWSER_IDENTIFIER:+--env "BROWSER_IDENTIFIER=$BROWSER_IDENTIFIER"}
 
   # Read runtime ID and endpoint ID from toolkit
   echo "--- Reading runtime info ---"
