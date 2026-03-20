@@ -198,3 +198,167 @@ class TestChannelManagement:
         }
         resp = handler(event, None)
         assert resp["statusCode"] == 400
+
+
+class TestUserManagement:
+    def test_get_users_paginated(self, mock_dynamodb):
+        from index import handler
+
+        mock_dynamodb.scan.return_value = {
+            "Items": [
+                {"PK": "USER#user_abc", "SK": "PROFILE", "userId": "user_abc",
+                 "displayName": "Alice", "createdAt": "2026-01-01T00:00:00Z"},
+                {"PK": "USER#user_abc", "SK": "CHANNEL#telegram:123",
+                 "channel": "telegram", "channelUserId": "123"},
+                {"PK": "USER#user_def", "SK": "PROFILE", "userId": "user_def",
+                 "displayName": "Bob", "createdAt": "2026-02-01T00:00:00Z"},
+            ],
+        }
+
+        event = {
+            "requestContext": {
+                "http": {"method": "GET", "path": "/api/users"},
+                "authorizer": {"jwt": {"claims": {"sub": "admin-1"}}},
+            },
+            "headers": {},
+            "queryStringParameters": {"limit": "50"},
+        }
+        resp = handler(event, None)
+        assert resp["statusCode"] == 200
+        body = json.loads(resp["body"])
+        assert len(body["users"]) == 2
+        alice = next(u for u in body["users"] if u["userId"] == "user_abc")
+        assert len(alice["channels"]) == 1
+        assert alice["channels"][0]["channel"] == "telegram"
+
+    def test_get_user_detail(self, mock_dynamodb):
+        from index import handler
+
+        mock_dynamodb.query.return_value = {
+            "Items": [
+                {"PK": "USER#user_abc", "SK": "PROFILE", "userId": "user_abc",
+                 "displayName": "Alice", "createdAt": "2026-01-01T00:00:00Z"},
+                {"PK": "USER#user_abc", "SK": "CHANNEL#telegram:123",
+                 "channel": "telegram", "channelUserId": "123"},
+                {"PK": "USER#user_abc", "SK": "SESSION",
+                 "sessionId": "ses_abc_12345678901234567", "createdAt": "2026-03-01T00:00:00Z"},
+                {"PK": "USER#user_abc", "SK": "CRON#daily_reminder",
+                 "expression": "0 9 * * *", "message": "Check email",
+                 "timezone": "UTC", "channel": "telegram"},
+            ],
+        }
+
+        event = {
+            "requestContext": {
+                "http": {"method": "GET", "path": "/api/users/user_abc"},
+                "authorizer": {"jwt": {"claims": {"sub": "admin-1"}}},
+            },
+            "headers": {},
+        }
+        resp = handler(event, None)
+        assert resp["statusCode"] == 200
+        body = json.loads(resp["body"])
+        assert body["userId"] == "user_abc"
+        assert len(body["channels"]) == 1
+        assert body["session"]["sessionId"] == "ses_abc_12345678901234567"
+        assert len(body["cronJobs"]) == 1
+
+    def test_delete_user_cascades(self, mock_dynamodb):
+        from index import handler
+
+        mock_dynamodb.query.return_value = {
+            "Items": [
+                {"PK": "USER#user_abc", "SK": "PROFILE"},
+                {"PK": "USER#user_abc", "SK": "CHANNEL#telegram:123"},
+                {"PK": "USER#user_abc", "SK": "SESSION"},
+                {"PK": "USER#user_abc", "SK": "CRON#daily_reminder"},
+            ],
+        }
+
+        with patch("index.scheduler_client") as mock_sched:
+            event = {
+                "requestContext": {
+                    "http": {"method": "DELETE", "path": "/api/users/user_abc"},
+                    "authorizer": {"jwt": {"claims": {"sub": "admin-1"}}},
+                },
+                "headers": {},
+            }
+            resp = handler(event, None)
+            assert resp["statusCode"] == 200
+            # Verify CHANNEL# reverse record deleted
+            delete_calls = mock_dynamodb.delete_item.call_args_list
+            pks_deleted = [c.kwargs["Key"]["PK"] for c in delete_calls]
+            assert "CHANNEL#telegram:123" in pks_deleted
+            assert "ALLOW#telegram:123" in pks_deleted
+
+    def test_post_allowlist(self, mock_dynamodb):
+        from index import handler
+
+        event = {
+            "requestContext": {
+                "http": {"method": "POST", "path": "/api/allowlist"},
+                "authorizer": {"jwt": {"claims": {"sub": "admin-1"}}},
+            },
+            "headers": {},
+            "body": json.dumps({"channelKey": "telegram:789"}),
+        }
+        resp = handler(event, None)
+        assert resp["statusCode"] == 200
+        mock_dynamodb.put_item.assert_called_once()
+        item = mock_dynamodb.put_item.call_args.kwargs["Item"]
+        assert item["PK"] == "ALLOW#telegram:789"
+
+    def test_get_allowlist(self, mock_dynamodb):
+        from index import handler
+
+        mock_dynamodb.scan.return_value = {
+            "Items": [
+                {"PK": "ALLOW#telegram:123", "SK": "ALLOW",
+                 "channelKey": "telegram:123", "addedAt": "2026-01-01T00:00:00Z"},
+            ],
+        }
+
+        event = {
+            "requestContext": {
+                "http": {"method": "GET", "path": "/api/allowlist"},
+                "authorizer": {"jwt": {"claims": {"sub": "admin-1"}}},
+            },
+            "headers": {},
+        }
+        resp = handler(event, None)
+        assert resp["statusCode"] == 200
+        body = json.loads(resp["body"])
+        assert len(body["entries"]) == 1
+
+    def test_delete_allowlist(self, mock_dynamodb):
+        from index import handler
+
+        event = {
+            "requestContext": {
+                "http": {"method": "DELETE",
+                         "path": "/api/allowlist/telegram%3A789"},
+                "authorizer": {"jwt": {"claims": {"sub": "admin-1"}}},
+            },
+            "headers": {},
+        }
+        resp = handler(event, None)
+        assert resp["statusCode"] == 200
+        mock_dynamodb.delete_item.assert_called_once_with(
+            Key={"PK": "ALLOW#telegram:789", "SK": "ALLOW"}
+        )
+
+    def test_delete_user_channel(self, mock_dynamodb):
+        from index import handler
+
+        event = {
+            "requestContext": {
+                "http": {"method": "DELETE",
+                         "path": "/api/users/user_abc/channels/telegram%3A123"},
+                "authorizer": {"jwt": {"claims": {"sub": "admin-1"}}},
+            },
+            "headers": {},
+        }
+        resp = handler(event, None)
+        assert resp["statusCode"] == 200
+        delete_calls = mock_dynamodb.delete_item.call_args_list
+        assert len(delete_calls) >= 2  # USER# CHANNEL# + CHANNEL# PROFILE

@@ -264,6 +264,275 @@ def _handle_register_telegram_webhook(event):
     return _json_response(200, {"telegramResponse": result})
 
 
+# ---- User Management ----
+
+@route("GET", "/api/users")
+def _handle_get_users(event):
+    """GET /api/users — list all users with bound channels."""
+    qs = event.get("queryParams", {})
+    limit = min(int(qs.get("limit", "50")), 200)
+    next_token = qs.get("nextToken")
+
+    params = {
+        "FilterExpression": "begins_with(PK, :u)",
+        "ExpressionAttributeValues": {":u": "USER#"},
+        "Limit": limit * 5,  # Over-fetch since filter is post-scan
+    }
+    if next_token:
+        params["ExclusiveStartKey"] = json.loads(
+            urllib.parse.unquote(next_token)
+        )
+
+    items = []
+    resp = identity_table.scan(**params)
+    items.extend(resp.get("Items", []))
+    result_next = resp.get("LastEvaluatedKey")
+
+    # Group by userId
+    users_map = {}
+    for item in items:
+        pk = item.get("PK", "")
+        sk = item.get("SK", "")
+        if not pk.startswith("USER#"):
+            continue
+        user_id = pk.replace("USER#", "")
+        if user_id not in users_map:
+            users_map[user_id] = {"userId": user_id, "channels": []}
+
+        if sk == "PROFILE":
+            users_map[user_id]["displayName"] = item.get("displayName", "")
+            users_map[user_id]["createdAt"] = item.get("createdAt", "")
+        elif sk.startswith("CHANNEL#"):
+            users_map[user_id]["channels"].append({
+                "channelKey": sk.replace("CHANNEL#", ""),
+                "channel": item.get("channel", ""),
+                "channelUserId": item.get("channelUserId", ""),
+            })
+
+    users = sorted(users_map.values(), key=lambda u: u.get("createdAt", ""), reverse=True)
+
+    result = {"users": users[:limit]}
+    if result_next:
+        result["nextToken"] = urllib.parse.quote(json.dumps(result_next, default=str))
+    return _json_response(200, result)
+
+
+@route("GET", "/api/users/{userId}")
+def _handle_get_user(event):
+    """GET /api/users/{userId} — user detail."""
+    user_id = event["pathParameters"]["userId"]
+
+    resp = identity_table.query(
+        KeyConditionExpression="PK = :pk",
+        ExpressionAttributeValues={":pk": f"USER#{user_id}"},
+    )
+    items = resp.get("Items", [])
+    if not items:
+        return _json_response(404, {"error": "User not found"})
+
+    profile = {}
+    channels = []
+    session = None
+    cron_jobs = []
+
+    for item in items:
+        sk = item.get("SK", "")
+        if sk == "PROFILE":
+            profile = {
+                "userId": item.get("userId", ""),
+                "displayName": item.get("displayName", ""),
+                "createdAt": item.get("createdAt", ""),
+            }
+        elif sk.startswith("CHANNEL#"):
+            channels.append({
+                "channelKey": sk.replace("CHANNEL#", ""),
+                "channel": item.get("channel", ""),
+                "channelUserId": item.get("channelUserId", ""),
+                "boundAt": item.get("boundAt", ""),
+            })
+        elif sk == "SESSION":
+            session = {
+                "sessionId": item.get("sessionId", ""),
+                "createdAt": item.get("createdAt", ""),
+                "lastActivity": item.get("lastActivity", ""),
+            }
+        elif sk.startswith("CRON#"):
+            cron_jobs.append({
+                "name": sk.replace("CRON#", ""),
+                "expression": item.get("expression", ""),
+                "message": item.get("message", ""),
+                "timezone": item.get("timezone", ""),
+                "channel": item.get("channel", ""),
+            })
+
+    return _json_response(200, {
+        **profile,
+        "channels": channels,
+        "session": session,
+        "cronJobs": cron_jobs,
+    })
+
+
+@route("DELETE", "/api/users/{userId}")
+def _handle_delete_user(event):
+    """DELETE /api/users/{userId} — delete user and cascade."""
+    user_id = event["pathParameters"]["userId"]
+    admin_sub = _get_admin_sub(event)
+
+    resp = identity_table.query(
+        KeyConditionExpression="PK = :pk",
+        ExpressionAttributeValues={":pk": f"USER#{user_id}"},
+    )
+    items = resp.get("Items", [])
+    if not items:
+        return _json_response(404, {"error": "User not found"})
+
+    channel_keys = []
+    for item in items:
+        sk = item.get("SK", "")
+
+        # Delete CHANNEL# reverse mapping
+        if sk.startswith("CHANNEL#"):
+            ch_key = sk.replace("CHANNEL#", "")
+            channel_keys.append(ch_key)
+            try:
+                identity_table.delete_item(Key={"PK": f"CHANNEL#{ch_key}", "SK": "PROFILE"})
+            except ClientError as e:
+                logger.error("Failed to delete CHANNEL# record: %s", e)
+
+        # Delete EventBridge schedules for CRON# records
+        if sk.startswith("CRON#"):
+            schedule_name = sk.replace("CRON#", "")
+            try:
+                scheduler_client.delete_schedule(
+                    Name=schedule_name, GroupName="openclaw-cron",
+                )
+            except ClientError as e:
+                if e.response["Error"]["Code"] != "ResourceNotFoundException":
+                    logger.error("Failed to delete schedule %s: %s", schedule_name, e)
+
+        # Delete the USER# record itself
+        try:
+            identity_table.delete_item(Key={"PK": f"USER#{user_id}", "SK": sk})
+        except ClientError as e:
+            logger.error("Failed to delete USER# record %s: %s", sk, e)
+
+    # Delete ALLOW# records for all channel keys
+    for ch_key in channel_keys:
+        try:
+            identity_table.delete_item(Key={"PK": f"ALLOW#{ch_key}", "SK": "ALLOW"})
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                logger.error("Failed to delete ALLOW# for %s: %s", ch_key, e)
+
+    _audit_log(admin_sub, "DELETE_USER", user_id,
+               f"channels={channel_keys}")
+    return _json_response(200, {"message": f"User {user_id} deleted"})
+
+
+@route("DELETE", "/api/users/{userId}/channels/{channelKey}")
+def _handle_delete_user_channel(event):
+    """DELETE /api/users/{userId}/channels/{channelKey} — unbind a channel."""
+    user_id = event["pathParameters"]["userId"]
+    channel_key = event["pathParameters"]["channelKey"]
+    admin_sub = _get_admin_sub(event)
+
+    # Delete USER# CHANNEL# back-reference
+    try:
+        identity_table.delete_item(
+            Key={"PK": f"USER#{user_id}", "SK": f"CHANNEL#{channel_key}"}
+        )
+    except ClientError as e:
+        logger.error("Failed to delete user channel: %s", e)
+
+    # Delete CHANNEL# PROFILE mapping
+    try:
+        identity_table.delete_item(
+            Key={"PK": f"CHANNEL#{channel_key}", "SK": "PROFILE"}
+        )
+    except ClientError as e:
+        logger.error("Failed to delete channel profile: %s", e)
+
+    _audit_log(admin_sub, "UNBIND_CHANNEL", f"{user_id}/{channel_key}")
+    return _json_response(200, {"message": f"Channel {channel_key} unbound from {user_id}"})
+
+
+# ---- Allowlist ----
+
+@route("GET", "/api/allowlist")
+def _handle_get_allowlist(event):
+    """GET /api/allowlist — list all allowlist entries."""
+    qs = event.get("queryParams", {})
+    limit = min(int(qs.get("limit", "50")), 200)
+    next_token = qs.get("nextToken")
+
+    params = {
+        "FilterExpression": "begins_with(PK, :a)",
+        "ExpressionAttributeValues": {":a": "ALLOW#"},
+        "Limit": limit * 2,
+    }
+    if next_token:
+        params["ExclusiveStartKey"] = json.loads(
+            urllib.parse.unquote(next_token)
+        )
+
+    resp = identity_table.scan(**params)
+    entries = []
+    for item in resp.get("Items", []):
+        entries.append({
+            "channelKey": item.get("channelKey", item.get("PK", "").replace("ALLOW#", "")),
+            "addedAt": item.get("addedAt", ""),
+        })
+
+    result = {"entries": entries[:limit]}
+    if resp.get("LastEvaluatedKey"):
+        result["nextToken"] = urllib.parse.quote(
+            json.dumps(resp["LastEvaluatedKey"], default=str)
+        )
+    return _json_response(200, result)
+
+
+@route("POST", "/api/allowlist")
+def _handle_post_allowlist(event):
+    """POST /api/allowlist — add allowlist entry."""
+    body = event["parsedBody"]
+    channel_key = body.get("channelKey", "").strip()
+    if not channel_key or ":" not in channel_key:
+        return _json_response(400, {"error": "channelKey must be in format 'channel:id'"})
+
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    try:
+        identity_table.put_item(Item={
+            "PK": f"ALLOW#{channel_key}",
+            "SK": "ALLOW",
+            "channelKey": channel_key,
+            "addedAt": now_iso,
+        })
+    except ClientError as e:
+        logger.error("Failed to add allowlist entry: %s", e)
+        return _json_response(500, {"error": "Failed to add allowlist entry"})
+
+    admin_sub = _get_admin_sub(event)
+    _audit_log(admin_sub, "ADD_ALLOWLIST", channel_key)
+    return _json_response(200, {"message": f"Added {channel_key} to allowlist"})
+
+
+@route("DELETE", "/api/allowlist/{channelKey}")
+def _handle_delete_allowlist(event):
+    """DELETE /api/allowlist/{channelKey} — remove allowlist entry."""
+    channel_key = event["pathParameters"]["channelKey"]
+    admin_sub = _get_admin_sub(event)
+
+    try:
+        identity_table.delete_item(Key={"PK": f"ALLOW#{channel_key}", "SK": "ALLOW"})
+    except ClientError as e:
+        logger.error("Failed to delete allowlist entry: %s", e)
+        return _json_response(500, {"error": "Failed to delete allowlist entry"})
+
+    _audit_log(admin_sub, "REMOVE_ALLOWLIST", channel_key)
+    return _json_response(200, {"message": f"Removed {channel_key} from allowlist"})
+
+
 def _match_route(method, path):
     """Match request to a route handler, supporting path parameters."""
     # Exact match first
