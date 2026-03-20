@@ -24,6 +24,7 @@ from stacks.guardrails_stack import GuardrailsStack
 from stacks.cron_stack import CronStack
 from stacks.observability_stack import ObservabilityStack
 from stacks.token_monitoring_stack import TokenMonitoringStack
+from stacks.admin_stack import AdminStack
 
 app = cdk.App()
 
@@ -100,6 +101,24 @@ cron_stack = CronStack(
     feishu_token_secret_name=security_stack.channel_secrets["feishu"].secret_name,
     cmk_arn=security_stack.cmk.key_arn,
     agentcore_execution_role=agentcore_stack.execution_role,
+    env=env,
+)
+
+# --- Admin Control Plane (Cognito + API Gateway + Lambda + CloudFront) ---
+_s3_user_files_bucket_name = f"openclaw-user-files-{_account}-{_region}"
+
+admin_stack = AdminStack(
+    app,
+    "OpenClawAdmin",
+    identity_table_name=_identity_table_name,
+    identity_table_arn=_identity_table_arn,
+    s3_user_files_bucket_name=_s3_user_files_bucket_name,
+    cmk_arn=security_stack.cmk.key_arn,
+    router_api_url=router_stack.http_api.url or "",
+    telegram_secret_name=security_stack.channel_secrets["telegram"].secret_name,
+    slack_secret_name=security_stack.channel_secrets["slack"].secret_name,
+    feishu_secret_name=security_stack.channel_secrets["feishu"].secret_name,
+    webhook_secret_name=security_stack.webhook_secret.secret_name,
     env=env,
 )
 

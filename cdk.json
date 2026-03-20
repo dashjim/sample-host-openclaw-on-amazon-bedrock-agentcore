@@ -25,6 +25,8 @@
     "runtime_id": "openclaw_agent-21FHcrBssV",
     "runtime_endpoint_id": "DEFAULT",
     "cron_lead_time_minutes": 5,
+    "admin_lambda_timeout_seconds": 60,
+    "admin_lambda_memory_mb": 256,
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
     "@aws-cdk/core:stackRelativeExports": true,
     "@aws-cdk/aws-ec2:uniqueImdsv2TemplateName": true,
