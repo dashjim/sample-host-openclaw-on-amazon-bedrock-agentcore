@@ -26,7 +26,10 @@ ROUTER_API_URL = os.environ.get("ROUTER_API_URL", "")
 # --- AWS Clients ---
 dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
 identity_table = dynamodb.Table(IDENTITY_TABLE_NAME)
-s3_client = boto3.client("s3", region_name=AWS_REGION)
+s3_client = boto3.client(
+    "s3", region_name=AWS_REGION,
+    config=boto3.session.Config(signature_version="s3v4"),
+)
 secrets_client = boto3.client("secretsmanager", region_name=AWS_REGION)
 scheduler_client = boto3.client("scheduler", region_name=AWS_REGION)
 
