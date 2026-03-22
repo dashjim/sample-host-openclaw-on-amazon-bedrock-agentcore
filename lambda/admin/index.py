@@ -551,7 +551,7 @@ def _validate_path(path):
 
 @route("GET", "/api/files")
 def _handle_list_namespaces(event):
-    """GET /api/files — list all user namespaces."""
+    """GET /api/files — list all user namespaces, enriched with user info."""
     qs = event.get("queryParams", {})
     continuation = qs.get("nextToken")
 
@@ -564,7 +564,32 @@ def _handle_list_namespaces(event):
         p["Prefix"].rstrip("/") for p in resp.get("CommonPrefixes", [])
     ]
 
-    result = {"namespaces": namespaces}
+    # Build namespace -> user mapping from DynamoDB CHANNEL# records
+    ns_user_map = {}
+    try:
+        scan_resp = identity_table.scan(
+            FilterExpression="begins_with(PK, :ch) AND SK = :sk",
+            ExpressionAttributeValues={":ch": "CHANNEL#", ":sk": "PROFILE"},
+        )
+        for item in scan_resp.get("Items", []):
+            channel_key = item.get("PK", "").replace("CHANNEL#", "")
+            ns = channel_key.replace(":", "_")
+            ns_user_map[ns] = {
+                "userId": item.get("userId", ""),
+                "displayName": item.get("displayName", ""),
+                "channelKey": channel_key,
+            }
+    except ClientError:
+        logger.exception("Failed to scan CHANNEL# records for namespace mapping")
+
+    entries = []
+    for ns in namespaces:
+        entry = {"namespace": ns}
+        if ns in ns_user_map:
+            entry.update(ns_user_map[ns])
+        entries.append(entry)
+
+    result = {"namespaces": entries}
     if resp.get("NextContinuationToken"):
         result["nextToken"] = resp["NextContinuationToken"]
     return _json_response(200, result)
@@ -572,39 +597,53 @@ def _handle_list_namespaces(event):
 
 @route("GET", "/api/files/{namespace}")
 def _handle_list_files(event):
-    """GET /api/files/{namespace} — list files in a namespace."""
+    """GET /api/files/{namespace} — list files/folders in a namespace prefix."""
     namespace = event["pathParameters"]["namespace"]
     if not _validate_namespace(namespace):
         return _json_response(400, {"error": "Invalid namespace"})
 
     qs = event.get("queryParams", {})
-    prefix = qs.get("prefix", "")  # Optional sub-path
+    prefix = qs.get("prefix", "")  # Optional sub-path (e.g., ".openclaw/skills/")
     continuation = qs.get("nextToken")
-    limit = min(int(qs.get("limit", "100")), 1000)
+    limit = min(int(qs.get("limit", "200")), 1000)
 
     s3_prefix = f"{namespace}/{prefix}" if prefix else f"{namespace}/"
     params = {
         "Bucket": S3_USER_FILES_BUCKET,
         "Prefix": s3_prefix,
+        "Delimiter": "/",
         "MaxKeys": limit,
     }
     if continuation:
         params["ContinuationToken"] = continuation
 
     resp = s3_client.list_objects_v2(**params)
+
+    # Folders (CommonPrefixes)
+    base_len = len(f"{namespace}/")
+    folders = []
+    for cp in resp.get("CommonPrefixes", []):
+        full_prefix = cp["Prefix"]
+        rel = full_prefix[base_len:]  # Relative to namespace, keeps trailing /
+        folder_name = rel.rstrip("/").rsplit("/", 1)[-1]
+        folders.append({"name": folder_name, "prefix": rel})
+
+    # Files (Contents)
     files = []
     for obj in resp.get("Contents", []):
         key = obj["Key"]
-        rel_path = key[len(f"{namespace}/"):]  # Relative to namespace
-        if not rel_path:
+        rel_path = key[base_len:]
+        if not rel_path or rel_path.endswith("/"):
             continue
+        file_name = rel_path.rsplit("/", 1)[-1]
         files.append({
+            "name": file_name,
             "path": rel_path,
             "size": obj.get("Size", 0),
             "lastModified": obj.get("LastModified", ""),
         })
 
-    result = {"files": files}
+    result = {"folders": folders, "files": files}
     if resp.get("NextContinuationToken"):
         result["nextToken"] = resp["NextContinuationToken"]
     return _json_response(200, result)

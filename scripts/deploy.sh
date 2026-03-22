@@ -12,6 +12,8 @@
 #   ./scripts/deploy.sh --runtime-only   # toolkit deploy only (Phase 2)
 #   ./scripts/deploy.sh --phase1         # Phase 1 only
 #   ./scripts/deploy.sh --phase3         # Phase 3 only (assumes runtime already deployed)
+#   ./scripts/deploy.sh --with-admin     # full deploy + admin control plane
+#   ./scripts/deploy.sh --admin-only     # deploy admin stack + frontend only
 #
 # Environment variables:
 #   BUILD_MODE          local-build (default) or codebuild
@@ -386,6 +388,25 @@ phase3_cdk() {
   echo ""
 }
 
+# --- Phase 4: Admin control plane ---
+phase4_admin() {
+  echo "=== Phase 4: Admin control plane ==="
+  cd "$PROJECT_DIR"
+  activate_venv
+
+  cdk deploy OpenClawAdmin --require-approval never
+
+  echo "--- Building and deploying admin UI ---"
+  if [ -f "$SCRIPT_DIR/deploy-admin-ui.sh" ]; then
+    bash "$SCRIPT_DIR/deploy-admin-ui.sh"
+  else
+    echo "WARNING: scripts/deploy-admin-ui.sh not found. Skipping frontend deploy."
+  fi
+
+  echo "  Phase 4 complete."
+  echo ""
+}
+
 case "$MODE" in
   --phase1)
     phase1_cdk
@@ -399,6 +420,15 @@ case "$MODE" in
   --cdk-only)
     phase1_cdk
     phase3_cdk
+    ;;
+  --admin-only)
+    phase4_admin
+    ;;
+  --with-admin)
+    phase1_cdk
+    phase2_toolkit
+    phase3_cdk
+    phase4_admin
     ;;
   *)
     phase1_cdk

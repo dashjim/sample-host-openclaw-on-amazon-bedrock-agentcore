@@ -28,7 +28,11 @@ export async function signIn(
   password: string
 ): Promise<SignInResult> {
   try {
-    const result = await amplifySignIn({ username: email, password });
+    const result = await amplifySignIn({
+      username: email,
+      password,
+      options: { authFlowType: 'USER_PASSWORD_AUTH' },
+    });
     if (
       result.nextStep?.signInStep === 'CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED'
     ) {

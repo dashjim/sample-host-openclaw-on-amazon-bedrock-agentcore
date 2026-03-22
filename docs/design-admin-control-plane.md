@@ -387,13 +387,19 @@ The deploy script (`deploy-admin-ui.sh`) reads these from CloudFormation outputs
 - Pagination controls
 
 **5. Files** (`/files`)
-- Left panel: Namespace list (user namespaces from S3)
-- Right panel: File tree browser
-  - Columns: Name, Size, Last Modified
+- Left panel: User list (S3 namespaces enriched with display name + channel key from DynamoDB)
+- Right panel: Folder tree browser with drill-down navigation
+  - Folders and files shown in one table, folders first (yellow folder icon, clickable)
+  - Breadcrumb navigation (clickable path segments to navigate up)
+  - Columns: Name, Size, Last Modified, Actions
   - Text file preview on click (< 1 MB)
   - Delete button with confirmation modal
-  - Breadcrumb navigation within namespace
+  - S3 `Delimiter=/` used for folder-level listing (no flat dump)
   - Pagination for large directories
+
+**Theme**: Dark/Light/System mode toggle in header. Default: System (follows OS preference). Stored in localStorage. Uses Ant Design `ConfigProvider` with `darkAlgorithm`/`defaultAlgorithm`.
+
+**Deployment integration**: Admin deploy integrated into main `deploy.sh` via `--with-admin` (full deploy + admin) and `--admin-only` (admin stack + frontend only) flags.
 
 #### Authentication Flow
 

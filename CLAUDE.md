@@ -8,7 +8,7 @@ OpenClaw on AgentCore Runtime — a multi-channel AI messaging bot (Telegram, Sl
 
 ## Tech Stack
 
-- **Infrastructure**: CDK v2 (Python), 7 stacks
+- **Infrastructure**: CDK v2 (Python), 8 stacks
 - **Runtime**: Bedrock AgentCore Runtime (serverless ARM64 container, VPC mode, per-user sessions)
 - **Channel Ingestion**: Router Lambda behind API Gateway HTTP API (Telegram webhook, Slack Events API, image uploads)
 - **Multimodal**: Image upload support — photos downloaded by Router Lambda, stored in S3, fetched by proxy, sent to Bedrock as multimodal content
@@ -22,6 +22,7 @@ OpenClaw on AgentCore Runtime — a multi-channel AI messaging bot (Telegram, Sl
 - **Observability**: CloudWatch dashboards + alarms, Bedrock invocation logging
 - **Token Monitoring**: Lambda + DynamoDB (single-table) + CloudWatch custom metrics
 - **API Key Management**: Dual-mode storage — native file-based (S3-synced) or AWS Secrets Manager (KMS-encrypted, CloudTrail-auditable) via `api-keys` skill
+- **Admin Control Plane**: React SPA (Ant Design) + API Gateway + Lambda — channel config, user/allowlist management, per-user S3 file browser, dark/light/system theme. Separate Cognito User Pool for admins. Frontend on S3+CloudFront
 - **Security**: VPC endpoints, KMS CMK, Secrets Manager, cdk-nag. `SECURITY.md` is a thin policy pointer; `docs/security.md` is the single source of truth for the full security architecture
 
 ## Architecture
@@ -162,6 +163,29 @@ openclaw-on-agentcore/
     setup-telegram.sh             # Telegram webhook + admin allowlist (one-step)
     setup-slack.sh                # Slack Event Subscriptions + admin allowlist
     manage-allowlist.sh           # Add/remove/list users in the allowlist
+  admin-ui/                       # Admin control plane React SPA
+    src/
+      pages/
+        Login.tsx                 # Cognito login + forced password change
+        Dashboard.tsx             # Stats cards, channel status overview
+        Channels.tsx              # Telegram/Slack/Feishu credential management
+        Users.tsx                 # User table, allowlist, detail drawer
+        Files.tsx                 # Per-user S3 file browser with folder navigation
+      services/
+        api.ts                    # API client with JWT auth
+        auth.ts                   # Cognito auth (Amplify v6)
+      App.tsx                     # Layout, routing, dark/light/system theme
+      config.ts                   # Runtime config from window.__CONFIG__
+    package.json
+    vite.config.ts
+  stacks/
+    admin_stack.py                # Admin CDK stack (Cognito, API GW, Lambda, S3+CloudFront)
+  lambda/
+    admin/index.py                # Admin Lambda (channels, users, allowlist, files)
+    admin/test_admin.py           # Admin Lambda unit tests (20 tests)
+  scripts/
+    setup-admin.sh                # Create admin user in Cognito
+    deploy-admin-ui.sh            # Build + deploy frontend to S3+CloudFront
   tests/
     e2e/                          # E2E tests (simulated Telegram webhooks + CloudWatch logs)
   docs/
@@ -170,7 +194,7 @@ openclaw-on-agentcore/
     security.md                   # Complete security architecture (single source of truth — threat model, 10 defense layers, operations runbook)
 ```
 
-## CDK Stacks (7 stacks)
+## CDK Stacks (8 stacks)
 
 | Stack | Key Resources | Dependencies |
 |---|---|---|
@@ -181,6 +205,7 @@ openclaw-on-agentcore/
 | **OpenClawObservability** | Operations dashboard, alarms, SNS, Bedrock invocation logging | None |
 | **OpenClawTokenMonitoring** | DynamoDB (single-table, 4 GSIs), Lambda processor, analytics dashboard | Observability |
 | **OpenClawCron** | EventBridge Scheduler group, Cron executor Lambda, Scheduler IAM role | AgentCore, Router, Security |
+| **OpenClawAdmin** | Admin Cognito User Pool, API Gateway HTTP API, Admin Lambda, S3+CloudFront (React SPA) | Security, Router, AgentCore |
 
 ## Expected Commands
 
@@ -194,6 +219,8 @@ Deployment uses a 3-phase hybrid model: CDK for infrastructure, Starter Toolkit 
 ./scripts/deploy.sh --phase1         # CDK foundation only
 ./scripts/deploy.sh --runtime-only   # Starter Toolkit only
 ./scripts/deploy.sh --phase3         # CDK dependent stacks only
+./scripts/deploy.sh --with-admin     # full deploy + admin control plane
+./scripts/deploy.sh --admin-only     # admin stack + frontend only
 ```
 
 #### Phase 1: CDK foundation stacks
@@ -416,6 +443,11 @@ cd bridge && node --test browser-lifecycle.test.js     # browser session lifecyc
 cd bridge/skills/s3-user-files && AWS_REGION=$CDK_DEFAULT_REGION node --test common.test.js  # S3 skill tests
 ```
 
+### Admin Lambda Tests
+```bash
+cd lambda/admin && python -m pytest test_admin.py -v                   # admin API unit tests (20 tests)
+```
+
 ### Router Lambda Tests
 ```bash
 cd lambda/router && python -m pytest test_image_upload.py -v        # image upload unit tests
@@ -517,6 +549,8 @@ sudo docker push $ACCOUNT.dkr.ecr.$CDK_DEFAULT_REGION.amazonaws.com/bedrock-agen
 | `cron_lead_time_minutes` | `5` | Minutes before schedule time to start warmup |
 | `subagent_model_id` | (empty) | Bedrock model for sub-agents. Empty = use `default_model_id` |
 | `enable_browser` | `false` | Enable headless Chromium browser. Sets `BROWSER_IDENTIFIER` env var on container |
+| `admin_lambda_timeout_seconds` | `30` | Admin Lambda timeout |
+| `admin_lambda_memory_mb` | `256` | Admin Lambda memory |
 
 ## Container Startup Sequence
 

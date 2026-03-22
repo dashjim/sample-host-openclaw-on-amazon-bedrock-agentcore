@@ -10,6 +10,8 @@ import {
   Layout,
   message,
   Breadcrumb,
+  Empty,
+  Tag,
 } from 'antd';
 import {
   FolderOutlined,
@@ -17,6 +19,8 @@ import {
   DeleteOutlined,
   EyeOutlined,
   LinkOutlined,
+  UserOutlined,
+  HomeOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { get, del } from '../services/api';
@@ -24,7 +28,20 @@ import { get, del } from '../services/api';
 const { Title, Text } = Typography;
 const { Sider, Content } = Layout;
 
+interface NamespaceEntry {
+  namespace: string;
+  userId?: string;
+  displayName?: string;
+  channelKey?: string;
+}
+
+interface FolderEntry {
+  name: string;
+  prefix: string;
+}
+
 interface FileEntry {
+  name: string;
   path: string;
   size: number;
   lastModified: string;
@@ -34,6 +51,11 @@ interface FileContentResponse {
   content?: string;
   presignedUrl?: string;
   size: number;
+}
+
+interface ListResponse {
+  folders: FolderEntry[];
+  files: FileEntry[];
 }
 
 const TEXT_EXTENSIONS = new Set([
@@ -54,11 +76,15 @@ function getExtension(path: string): string {
   return dot >= 0 ? path.substring(dot).toLowerCase() : '';
 }
 
-export default function Files() {
-  const [namespaces, setNamespaces] = useState<string[]>([]);
-  const [nsLoading, setNsLoading] = useState(true);
-  const [selectedNs, setSelectedNs] = useState<string | null>(null);
+type RowEntry = { type: 'folder'; data: FolderEntry } | { type: 'file'; data: FileEntry };
 
+export default function Files() {
+  const [namespaces, setNamespaces] = useState<NamespaceEntry[]>([]);
+  const [nsLoading, setNsLoading] = useState(true);
+  const [selectedNs, setSelectedNs] = useState<NamespaceEntry | null>(null);
+
+  const [currentPrefix, setCurrentPrefix] = useState('');
+  const [folders, setFolders] = useState<FolderEntry[]>([]);
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [filesLoading, setFilesLoading] = useState(false);
 
@@ -69,29 +95,39 @@ export default function Files() {
 
   useEffect(() => {
     setNsLoading(true);
-    get<{ namespaces: string[] }>('/api/files')
+    get<{ namespaces: NamespaceEntry[] }>('/api/files')
       .then((data) => setNamespaces(data.namespaces))
       .catch(console.error)
       .finally(() => setNsLoading(false));
   }, []);
 
-  const fetchFiles = useCallback((ns: string) => {
+  const fetchFolder = useCallback((ns: string, prefix: string) => {
     setFilesLoading(true);
-    get<{ files: FileEntry[] }>(`/api/files/${ns}`)
-      .then((data) => setFiles(data.files))
+    const params = prefix ? `?prefix=${encodeURIComponent(prefix)}` : '';
+    get<ListResponse>(`/api/files/${ns}${params}`)
+      .then((data) => {
+        setFolders(data.folders || []);
+        setFiles(data.files || []);
+      })
       .catch(console.error)
       .finally(() => setFilesLoading(false));
   }, []);
 
-  const handleSelectNs = (ns: string) => {
-    setSelectedNs(ns);
-    fetchFiles(ns);
+  const handleSelectNs = (entry: NamespaceEntry) => {
+    setSelectedNs(entry);
+    setCurrentPrefix('');
+    fetchFolder(entry.namespace, '');
+  };
+
+  const handleNavigateFolder = (prefix: string) => {
+    if (!selectedNs) return;
+    setCurrentPrefix(prefix);
+    fetchFolder(selectedNs.namespace, prefix);
   };
 
   const handlePreview = async (ns: string, filePath: string) => {
     const ext = getExtension(filePath);
     if (!TEXT_EXTENSIONS.has(ext)) {
-      // Binary file: open presigned URL
       try {
         const data = await get<FileContentResponse>(
           `/api/files/${ns}/${filePath}`
@@ -128,44 +164,88 @@ export default function Files() {
     try {
       await del(`/api/files/${ns}/${filePath}`);
       message.success('File deleted');
-      fetchFiles(ns);
+      fetchFolder(ns, currentPrefix);
     } catch {
       message.error('Failed to delete file');
     }
   };
 
-  const columns: ColumnsType<FileEntry> = [
+  // Build breadcrumb from current prefix
+  const breadcrumbParts = currentPrefix
+    ? currentPrefix.replace(/\/$/, '').split('/')
+    : [];
+
+  const breadcrumbItems = [
     {
-      title: 'Path',
-      dataIndex: 'path',
-      key: 'path',
-      render: (path: string) => (
-        <span>
-          <FileOutlined style={{ marginRight: 8, color: '#8c8c8c' }} />
-          {path}
-        </span>
+      title: (
+        <a onClick={() => selectedNs && handleNavigateFolder('')}>
+          <HomeOutlined /> {selectedNs?.displayName || selectedNs?.namespace || 'Root'}
+        </a>
       ),
+    },
+    ...breadcrumbParts.map((part, i) => {
+      const prefix = breadcrumbParts.slice(0, i + 1).join('/') + '/';
+      const isLast = i === breadcrumbParts.length - 1;
+      return {
+        title: isLast ? (
+          part
+        ) : (
+          <a onClick={() => handleNavigateFolder(prefix)}>{part}</a>
+        ),
+      };
+    }),
+  ];
+
+  // Merge folders and files into one table
+  const rows: RowEntry[] = [
+    ...folders.map((f): RowEntry => ({ type: 'folder' as const, data: f })),
+    ...files.map((f): RowEntry => ({ type: 'file' as const, data: f })),
+  ];
+
+  const columns: ColumnsType<RowEntry> = [
+    {
+      title: 'Name',
+      key: 'name',
+      render: (_: unknown, record: RowEntry) => {
+        if (record.type === 'folder') {
+          return (
+            <a onClick={() => handleNavigateFolder(record.data.prefix)} style={{ fontWeight: 500 }}>
+              <FolderOutlined style={{ marginRight: 8, color: '#faad14' }} />
+              {record.data.name}
+            </a>
+          );
+        }
+        return (
+          <span>
+            <FileOutlined style={{ marginRight: 8, color: '#8c8c8c' }} />
+            {record.data.name}
+          </span>
+        );
+      },
     },
     {
       title: 'Size',
-      dataIndex: 'size',
       key: 'size',
       width: 100,
-      render: (size: number) => formatBytes(size),
+      render: (_: unknown, record: RowEntry) =>
+        record.type === 'file' ? formatBytes(record.data.size) : '-',
     },
     {
       title: 'Last Modified',
-      dataIndex: 'lastModified',
       key: 'lastModified',
       width: 180,
-      render: (v: string) => (v ? new Date(v).toLocaleString() : '-'),
+      render: (_: unknown, record: RowEntry) =>
+        record.type === 'file' && record.data.lastModified
+          ? new Date(record.data.lastModified).toLocaleString()
+          : '-',
     },
     {
       title: 'Actions',
       key: 'actions',
       width: 140,
-      render: (_: unknown, record: FileEntry) => {
-        const ext = getExtension(record.path);
+      render: (_: unknown, record: RowEntry) => {
+        if (record.type === 'folder') return null;
+        const ext = getExtension(record.data.path);
         const isText = TEXT_EXTENSIONS.has(ext);
         return (
           <span style={{ display: 'flex', gap: 4 }}>
@@ -173,7 +253,7 @@ export default function Files() {
               size="small"
               icon={isText ? <EyeOutlined /> : <LinkOutlined />}
               onClick={() =>
-                selectedNs && handlePreview(selectedNs, record.path)
+                selectedNs && handlePreview(selectedNs.namespace, record.data.path)
               }
             >
               {isText ? 'View' : 'Open'}
@@ -181,7 +261,7 @@ export default function Files() {
             <Popconfirm
               title="Delete this file?"
               onConfirm={() =>
-                selectedNs && handleDelete(selectedNs, record.path)
+                selectedNs && handleDelete(selectedNs.namespace, record.data.path)
               }
             >
               <Button size="small" danger icon={<DeleteOutlined />} />
@@ -192,26 +272,28 @@ export default function Files() {
     },
   ];
 
-  const breadcrumbItems = [
-    { title: 'Files' },
-    ...(selectedNs ? [{ title: selectedNs }] : []),
-  ];
+  // User label for sidebar
+  const getUserLabel = (entry: NamespaceEntry) => {
+    if (entry.displayName) return entry.displayName;
+    if (entry.channelKey) return entry.channelKey;
+    return entry.namespace;
+  };
 
   return (
     <div>
       <Title level={4}>Files</Title>
 
-      <Layout style={{ background: '#fff', minHeight: 500 }}>
+      <Layout style={{ background: 'transparent', minHeight: 500 }}>
         <Sider
-          width={240}
+          width={260}
           style={{
-            background: '#fff',
-            borderRight: '1px solid #f0f0f0',
+            background: 'transparent',
+            borderRight: '1px solid var(--border-color, #f0f0f0)',
             overflow: 'auto',
           }}
         >
           <div style={{ padding: '12px 16px', fontWeight: 500 }}>
-            Namespaces
+            Users
           </div>
           {nsLoading ? (
             <div style={{ textAlign: 'center', padding: 20 }}>
@@ -222,37 +304,51 @@ export default function Files() {
               type="secondary"
               style={{ display: 'block', padding: '8px 16px' }}
             >
-              No namespaces found
+              No user files found
             </Text>
           ) : (
             <Menu
               mode="inline"
-              selectedKeys={selectedNs ? [selectedNs] : []}
-              onClick={({ key }) => handleSelectNs(key)}
-              items={namespaces.map((ns) => ({
-                key: ns,
-                icon: <FolderOutlined />,
-                label: ns,
+              selectedKeys={selectedNs ? [selectedNs.namespace] : []}
+              onClick={({ key }) => {
+                const entry = namespaces.find((n) => n.namespace === key);
+                if (entry) handleSelectNs(entry);
+              }}
+              items={namespaces.map((entry) => ({
+                key: entry.namespace,
+                icon: <UserOutlined />,
+                label: (
+                  <div>
+                    <div style={{ lineHeight: '20px' }}>{getUserLabel(entry)}</div>
+                    {entry.channelKey && entry.displayName && (
+                      <Tag style={{ fontSize: 10, marginTop: 2 }}>
+                        {entry.channelKey}
+                      </Tag>
+                    )}
+                  </div>
+                ),
               }))}
             />
           )}
         </Sider>
         <Content style={{ padding: 16 }}>
-          <Breadcrumb items={breadcrumbItems} style={{ marginBottom: 16 }} />
-
           {!selectedNs ? (
-            <Text type="secondary">
-              Select a namespace from the left panel to browse files.
-            </Text>
+            <Empty description="Select a user from the left panel to browse files" />
           ) : (
-            <Table
-              columns={columns}
-              dataSource={files}
-              rowKey="path"
-              loading={filesLoading}
-              pagination={{ pageSize: 50 }}
-              size="middle"
-            />
+            <>
+              <Breadcrumb items={breadcrumbItems} style={{ marginBottom: 16 }} />
+              <Table
+                columns={columns}
+                dataSource={rows}
+                rowKey={(r) =>
+                  r.type === 'folder' ? `d:${r.data.prefix}` : `f:${r.data.path}`
+                }
+                loading={filesLoading}
+                pagination={{ pageSize: 50 }}
+                size="middle"
+                locale={{ emptyText: <Empty description="Empty folder" /> }}
+              />
+            </>
           )}
         </Content>
       </Layout>
@@ -278,7 +374,6 @@ export default function Files() {
             style={{
               maxHeight: 500,
               overflow: 'auto',
-              background: '#fafafa',
               padding: 16,
               borderRadius: 4,
               fontSize: 12,
