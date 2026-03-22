@@ -250,20 +250,20 @@ def handle_audit(namespace):
 
             # Generate and upload HTML report
             try:
-                from skill_eval.cli import run_audit as _audit
-                from skill_eval.report import format_text_report
-                report = _audit(skill_path, verbose=True, include_all=True)
-                # Try HTML format if available
-                try:
-                    from skill_eval.html_report import format_html_report
-                    html = format_html_report([report])
-                    s3_key = _upload_html_report(namespace, skill_name, html)
-                    if s3_key:
-                        audit_result["reportKey"] = s3_key
-                except ImportError:
-                    pass
-            except Exception:
-                pass
+                from skill_eval.html_report import generate_html_report
+                report_data = {
+                    "skill_name": skill_name,
+                    "skill_path": skill_path,
+                    "score": audit_result.get("score", 0),
+                    "grade": audit_result.get("grade", "F"),
+                    "findings": audit_result.get("findings", []),
+                }
+                html = generate_html_report(report_data)
+                s3_key = _upload_html_report(namespace, skill_name, html)
+                if s3_key:
+                    audit_result["reportKey"] = s3_key
+            except Exception as e:
+                logger.warning("HTML report generation failed for %s: %s", skill_name, e)
 
             results.append(audit_result)
 
