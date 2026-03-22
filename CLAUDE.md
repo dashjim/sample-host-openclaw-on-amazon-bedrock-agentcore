@@ -23,6 +23,7 @@ OpenClaw on AgentCore Runtime — a multi-channel AI messaging bot (Telegram, Sl
 - **Token Monitoring**: Lambda + DynamoDB (single-table) + CloudWatch custom metrics
 - **API Key Management**: Dual-mode storage — native file-based (S3-synced) or AWS Secrets Manager (KMS-encrypted, CloudTrail-auditable) via `api-keys` skill
 - **Admin Control Plane**: React SPA (Ant Design) + API Gateway + Lambda — channel config, user/allowlist management, per-user S3 file browser, dark/light/system theme. Separate Cognito User Pool for admins. Frontend on S3+CloudFront
+- **Skill Security Scanning**: Container Lambda (`openclaw-skill-eval`) with Claude CLI + [sample-agent-skill-eval](https://github.com/aws-samples/sample-agent-skill-eval) — static audit (secrets, injection, unsafe patterns) and AI-powered functional/trigger evaluation via Bedrock. EventBridge daily schedule. Results in DynamoDB + HTML reports in S3
 - **Security**: VPC endpoints, KMS CMK, Secrets Manager, cdk-nag. `SECURITY.md` is a thin policy pointer; `docs/security.md` is the single source of truth for the full security architecture
 
 ## Architecture
@@ -179,10 +180,14 @@ openclaw-on-agentcore/
     package.json
     vite.config.ts
   stacks/
-    admin_stack.py                # Admin CDK stack (Cognito, API GW, Lambda, S3+CloudFront)
+    admin_stack.py                # Admin CDK stack (Cognito, API GW, Lambda, S3+CloudFront, Skill Eval)
   lambda/
-    admin/index.py                # Admin Lambda (channels, users, allowlist, files)
+    admin/index.py                # Admin Lambda (channels, users, allowlist, files, skill-eval proxy)
     admin/test_admin.py           # Admin Lambda unit tests (20 tests)
+    skill_eval/
+      Dockerfile                  # Container image: Python 3.12 + Node.js 22 + Claude CLI + skill-eval
+      handler.py                  # Skill eval Lambda (audit, eval, scan-all)
+      skill_eval_src/             # Local clone of sample-agent-skill-eval
   scripts/
     setup-admin.sh                # Create admin user in Cognito
     deploy-admin-ui.sh            # Build + deploy frontend to S3+CloudFront
@@ -205,7 +210,7 @@ openclaw-on-agentcore/
 | **OpenClawObservability** | Operations dashboard, alarms, SNS, Bedrock invocation logging | None |
 | **OpenClawTokenMonitoring** | DynamoDB (single-table, 4 GSIs), Lambda processor, analytics dashboard | Observability |
 | **OpenClawCron** | EventBridge Scheduler group, Cron executor Lambda, Scheduler IAM role | AgentCore, Router, Security |
-| **OpenClawAdmin** | Admin Cognito User Pool, API Gateway HTTP API, Admin Lambda, S3+CloudFront (React SPA) | Security, Router, AgentCore |
+| **OpenClawAdmin** | Admin Cognito User Pool, API Gateway HTTP API, Admin Lambda, Skill Eval Lambda (container, ARM64), S3+CloudFront (React SPA), EventBridge daily skill scan | Security, Router, AgentCore |
 
 ## Expected Commands
 
@@ -551,6 +556,10 @@ sudo docker push $ACCOUNT.dkr.ecr.$CDK_DEFAULT_REGION.amazonaws.com/bedrock-agen
 | `enable_browser` | `false` | Enable headless Chromium browser. Sets `BROWSER_IDENTIFIER` env var on container |
 | `admin_lambda_timeout_seconds` | `30` | Admin Lambda timeout |
 | `admin_lambda_memory_mb` | `256` | Admin Lambda memory |
+| `skill_eval_lambda_timeout_seconds` | `900` | Skill eval Lambda timeout (15 min max for full eval) |
+| `skill_eval_lambda_memory_mb` | `1024` | Skill eval Lambda memory |
+| `skill_eval_schedule` | `rate(1 day)` | Daily skill security scan schedule |
+| `skill_eval_enabled` | `true` | Enable/disable daily skill scanning |
 
 ## Container Startup Sequence
 
