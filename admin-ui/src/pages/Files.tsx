@@ -428,6 +428,26 @@ export default function Files() {
                 }
                 extra={
                   <Space>
+                    {scanResult && scanResult.skills?.some((s) => s.reportKey) && (
+                      <Button
+                        size="small"
+                        icon={<EyeOutlined />}
+                        onClick={async () => {
+                          const skill = scanResult.skills.find((s) => s.reportKey);
+                          if (!skill?.reportKey) return;
+                          try {
+                            const ns = selectedNs.namespace;
+                            const path = skill.reportKey.slice(ns.length + 1);
+                            const data = await get<{ presignedUrl?: string }>(
+                              `/api/files/${ns}/${path}`
+                            );
+                            if (data.presignedUrl) window.open(data.presignedUrl, '_blank');
+                          } catch { message.error('Failed to open report'); }
+                        }}
+                      >
+                        View Report
+                      </Button>
+                    )}
                     <Button
                       size="small"
                       icon={<ScanOutlined />}
@@ -475,26 +495,6 @@ export default function Files() {
                           ),
                           children: (
                             <>
-                              {skill.reportKey && (
-                                <Button
-                                  size="small"
-                                  type="link"
-                                  icon={<EyeOutlined />}
-                                  style={{ marginBottom: 8, padding: 0 }}
-                                  onClick={async () => {
-                                    try {
-                                      const ns = selectedNs!.namespace;
-                                      const path = skill.reportKey!.slice(ns.length + 1);
-                                      const data = await get<{ presignedUrl?: string }>(
-                                        `/api/files/${ns}/${encodeURIComponent(path)}`
-                                      );
-                                      if (data.presignedUrl) window.open(data.presignedUrl, '_blank');
-                                    } catch { message.error('Failed to open report'); }
-                                  }}
-                                >
-                                  View Full HTML Report
-                                </Button>
-                              )}
                               {skill.findings && skill.findings.length > 0 ? (
                                 <Table
                                   size="small"
