@@ -165,8 +165,14 @@ export default function Files() {
 
   const fetchScanResult = useCallback((ns: string) => {
     setScanLoading(true);
-    get<ScanResult>(`/api/skill-eval/${ns}`)
-      .then(setScanResult)
+    get<ScanResult & { error?: string }>(`/api/skill-eval/${ns}`)
+      .then((data) => {
+        if (data && data.skills && !data.error) {
+          setScanResult(data);
+        } else {
+          setScanResult(null);
+        }
+      })
       .catch(() => setScanResult(null))
       .finally(() => setScanLoading(false));
   }, []);
@@ -450,7 +456,7 @@ export default function Files() {
                         showIcon
                       />
                     )}
-                    {scanResult.skills.length > 0 && (
+                    {(scanResult.skills?.length ?? 0) > 0 && (
                       <Collapse
                         size="small"
                         style={{ marginTop: 8 }}
