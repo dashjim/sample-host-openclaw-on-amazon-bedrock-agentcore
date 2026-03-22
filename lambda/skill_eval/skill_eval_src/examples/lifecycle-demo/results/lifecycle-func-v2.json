@@ -1,0 +1,463 @@
+{
+  "skill_name": "pr-naming-convention",
+  "skill_path": "./examples/lifecycle-demo/v2",
+  "eval_count": 6,
+  "runs_per_eval": 1,
+  "metadata": {
+    "timestamp": "2026-03-15T10:58:29Z"
+  },
+  "runs": [
+    {
+      "eval_id": "valid-title-standard",
+      "run_index": 0,
+      "with_skill": {
+        "eval_id": "valid-title-standard",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains 'valid' or contains 'Valid' or contains '\u2705' or contains 'correct' or contains 'follows'",
+            "passed": true,
+            "evidence": "OR satisfied by: contains 'valid' \u2014 Substring found: 'valid'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 1.0,
+        "summary": "With skill: 100% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 13,
+          "token_counts": {
+            "input_tokens": 143268,
+            "output_tokens": 853,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 37.34605643898249
+        },
+        "raw_output": "Your PR title **`[TEAM-42] feat: add user authentication`** is valid and follows the naming convention.\n\nIt correctly matches the required format: `[TEAM-<number>] <type>: <description>`\n- **Ticket:** TEAM-42\n- **Type:** `feat`\n- **Description:** `add user authentication` (lowercase start, no trailing period, within 72 characters)"
+      },
+      "without_skill": {
+        "eval_id": "valid-title-standard",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains 'valid' or contains 'Valid' or contains '\u2705' or contains 'correct' or contains 'follows'",
+            "passed": true,
+            "evidence": "OR satisfied by: contains 'valid' \u2014 Substring found: 'valid'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 1.0,
+        "summary": "Without skill: 100% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 4,
+          "token_counts": {
+            "input_tokens": 67718,
+            "output_tokens": 582,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 19.331976037006825
+        },
+        "raw_output": "Let me check if there's any project documentation defining your PR naming convention.I don't have any project-specific naming convention documented in this repository (no `CLAUDE.md`, `CONTRIBUTING.md`, or PR template found). However, I can analyze the PR title against common conventions:\n\n**PR Title:** `[TEAM-42] feat: add user authentication`\n\n| Aspect | Status | Detail |\n|---|---|---|\n| Ticket reference | OK | `[TEAM-42]` \u2014 bracketed Jira-style ticket ID |\n| Conventional Commit type | OK | `feat:` \u2014 valid type prefix |\n| Description | OK | `add user authentication` \u2014 lowercase, imperative, concise |\n| Length | OK | Well under 72 characters |\n\nThis title follows a widely-used pattern: `[TICKET-ID] <type>: <description>`, combining **Jira-style ticket references** with **Conventional Commits** syntax. It looks well-formed.\n\nIf you have a specific naming convention I should validate against, could you point me to where it's documented (or describe it), and I can do a more precise check?"
+      },
+      "delta_pass_rate": 0.0
+    },
+    {
+      "eval_id": "invalid-title-missing-ticket",
+      "run_index": 0,
+      "with_skill": {
+        "eval_id": "invalid-title-missing-ticket",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains 'invalid' or contains 'Invalid' or contains '\u274c' or contains 'missing' or contains 'TEAM'",
+            "passed": true,
+            "evidence": "OR satisfied by: contains 'missing' \u2014 Substring found: 'missing'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 1.0,
+        "summary": "With skill: 100% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 39,
+          "token_counts": {
+            "input_tokens": 143541,
+            "output_tokens": 775,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 105.80255230795592
+        },
+        "raw_output": "Let me validate that PR title against the naming convention.**The PR title is not valid.** It's missing the required ticket prefix.\n\nThe required format is: `[TEAM-<number>] <type>: <description>`\n\nYour title `fix: resolve login bug` is missing the `[TEAM-<number>]` prefix. A corrected version would look like:\n\n```\n[TEAM-123] fix: resolve login bug\n```\n\nReplace `123` with your actual ticket number."
+      },
+      "without_skill": {
+        "eval_id": "invalid-title-missing-ticket",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains 'invalid' or contains 'Invalid' or contains '\u274c' or contains 'missing' or contains 'TEAM'",
+            "passed": false,
+            "evidence": "No OR branch satisfied \u2014 contains 'invalid': Substring not found: 'invalid'; contains 'invalid': Substring not found: 'invalid'; contains '\u274c': Substring not found: '\u274c'; contains 'missing': Substring not found: 'missing'; contains 'team': Substring not found: 'team'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 0.0,
+        "summary": "Without skill: 0% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 0,
+          "token_counts": {
+            "input_tokens": 22289,
+            "output_tokens": 367,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 12.493334377883002
+        },
+        "raw_output": "The format is correct \u2014 it follows the [Conventional Commits](https://www.conventionalcommits.org/) style (`type: description`). A few observations:\n\n**What's good:**\n- Uses the `fix:` prefix correctly for a bug fix\n- Under 70 characters\n- Lowercase, no period at the end\n\n**What could be improved:**\n- It's vague \u2014 \"login bug\" doesn't tell reviewers *what* the bug was. A more specific title would be better, e.g.:\n  - `fix: resolve null pointer on login when session expires`\n  - `fix: prevent login failure for users with special characters in password`\n\nWhether it's \"correct\" ultimately depends on your project's conventions, but more specificity in the description generally makes for better PR titles."
+      },
+      "delta_pass_rate": 1.0
+    },
+    {
+      "eval_id": "invalid-title-bad-type",
+      "run_index": 0,
+      "with_skill": {
+        "eval_id": "invalid-title-bad-type",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains 'invalid' or contains 'Invalid' or contains 'not' or contains 'yolo'",
+            "passed": true,
+            "evidence": "OR satisfied by: contains 'invalid' \u2014 Substring found: 'invalid'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'feat' or contains 'fix' or contains 'type'",
+            "passed": true,
+            "evidence": "OR satisfied by: contains 'feat' \u2014 Substring found: 'feat'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 1.0,
+        "summary": "With skill: 100% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 8,
+          "token_counts": {
+            "input_tokens": 211448,
+            "output_tokens": 869,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 31.22695764992386
+        },
+        "raw_output": "**Invalid.** The type `yolo` is not allowed. Valid types are: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`.\n\n**Suggested fix:** Pick the type that best describes the change. For example:\n\n- `[TEAM-99] feat: ship it fast` \u2014 if it's a new feature\n- `[TEAM-99] fix: ship it fast` \u2014 if it's a bug fix\n- `[TEAM-99] chore: ship it fast` \u2014 if it's a maintenance task"
+      },
+      "without_skill": {
+        "eval_id": "invalid-title-bad-type",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains 'invalid' or contains 'Invalid' or contains 'not' or contains 'yolo'",
+            "passed": true,
+            "evidence": "OR satisfied by: contains 'not' \u2014 Substring found: 'not'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'feat' or contains 'fix' or contains 'type'",
+            "passed": true,
+            "evidence": "OR satisfied by: contains 'fix' \u2014 Substring found: 'fix'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 1.0,
+        "summary": "Without skill: 100% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 0,
+          "token_counts": {
+            "input_tokens": 22288,
+            "output_tokens": 274,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 10.437301993137226
+        },
+        "raw_output": "This PR title has a few issues:\n\n1. **Vague description** \u2014 \"ship it fast\" doesn't describe what the PR actually changes. A reviewer can't tell what this does without opening it.\n2. **Unprofessional tone** \u2014 \"yolo\" doesn't belong in a PR title. It signals low confidence in the change and undermines trust in code review.\n3. **Ticket prefix is fine** \u2014 `[TEAM-99]` is good for traceability.\n\nA better format would be something like:\n\n```\n[TEAM-99] Add batch processing for user notifications\n```\n\nGood PR titles should:\n- Summarize **what** changed in under 70 characters\n- Be specific enough that someone scanning a list of PRs understands the scope\n- Use imperative mood (\"Add\", \"Fix\", \"Update\", not \"Added\", \"Fixing\")"
+      },
+      "delta_pass_rate": 0.0
+    },
+    {
+      "eval_id": "valid-branch",
+      "run_index": 0,
+      "with_skill": {
+        "eval_id": "valid-branch",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains 'valid' or contains 'Valid' or contains '\u2705' or contains 'correct' or contains 'follows'",
+            "passed": true,
+            "evidence": "OR satisfied by: contains 'valid' \u2014 Substring found: 'valid'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 1.0,
+        "summary": "With skill: 100% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 8,
+          "token_counts": {
+            "input_tokens": 188337,
+            "output_tokens": 844,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 30.09799876390025
+        },
+        "raw_output": "Let me validate that branch name using the convention checker.**Yes, `platform/TEAM-42-add-auth` is a valid branch name.** It follows the convention correctly:\n\n- **Team prefix:** `platform` \n- **Ticket number:** `TEAM-42`\n- **Description:** `add-auth` (kebab-case)\n\nFormat: `<team>/<ticket>-<description>`"
+      },
+      "without_skill": {
+        "eval_id": "valid-branch",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains 'valid' or contains 'Valid' or contains '\u2705' or contains 'correct' or contains 'follows'",
+            "passed": true,
+            "evidence": "OR satisfied by: contains 'follows' \u2014 Substring found: 'follows'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 1.0,
+        "summary": "Without skill: 100% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 0,
+          "token_counts": {
+            "input_tokens": 22295,
+            "output_tokens": 165,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 7.269427730003372
+        },
+        "raw_output": "I don't have any context about your project's branch naming conventions. There's no repository in the current working directory, and I don't have any saved memory about your team's conventions.\n\nCould you share what your branch naming convention is? For example, is it documented in a `CONTRIBUTING.md`, `CLAUDE.md`, or similar file? If you point me to the relevant file or describe the convention, I can check whether `platform/TEAM-42-add-auth` follows it."
+      },
+      "delta_pass_rate": 0.0
+    },
+    {
+      "eval_id": "invalid-branch-no-ticket",
+      "run_index": 0,
+      "with_skill": {
+        "eval_id": "invalid-branch-no-ticket",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains 'invalid' or contains 'Invalid' or contains '\u274c' or contains 'missing' or contains 'TEAM' or contains 'format'",
+            "passed": true,
+            "evidence": "OR satisfied by: contains 'invalid' \u2014 Substring found: 'invalid'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 1.0,
+        "summary": "With skill: 100% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 6,
+          "token_counts": {
+            "input_tokens": 141213,
+            "output_tokens": 778,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 25.438824262004346
+        },
+        "raw_output": "The branch name `feature/login-page` is **invalid**. It's missing the ticket number.\n\n**Required format:** `<team>/<ticket>-<description>`\n\n**What's wrong:**\n- The branch uses `feature` as the prefix instead of a team name\n- There's no ticket number (e.g., `TEAM-42`)\n\n**Suggested fix:** `platform/TEAM-XX-login-page` (replace `platform` with your team name and `XX` with the actual ticket number)\n\nFor example, if your team is `frontend` and the ticket is `TEAM-15`:\n```\nfrontend/TEAM-15-login-page\n```\n\nWhat's your team name and ticket number? I can give you the exact corrected branch name."
+      },
+      "without_skill": {
+        "eval_id": "invalid-branch-no-ticket",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains 'invalid' or contains 'Invalid' or contains '\u274c' or contains 'missing' or contains 'TEAM' or contains 'format'",
+            "passed": true,
+            "evidence": "OR satisfied by: contains 'format' \u2014 Substring found: 'format'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 1.0,
+        "summary": "Without skill: 100% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 0,
+          "token_counts": {
+            "input_tokens": 22289,
+            "output_tokens": 109,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 6.803421900840476
+        },
+        "raw_output": "\n\nThe branch name `feature/login-page` follows a common Git branch naming convention:\n\n- **Prefix:** `feature/` \u2014 indicates this branch is for new feature development\n- **Description:** `login-page` \u2014 describes the feature being worked on\n- **Format:** Uses lowercase with hyphens as separators, which is a widely accepted best practice\n\nThis is a well-formed branch name. It's clean, descriptive, and follows the popular Git Flow / conventional branching pattern."
+      },
+      "delta_pass_rate": 0.0
+    },
+    {
+      "eval_id": "suggest-fix",
+      "run_index": 0,
+      "with_skill": {
+        "eval_id": "suggest-fix",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains '[TEAM-42]'",
+            "passed": true,
+            "evidence": "Substring found: '[team-42]'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'feat' or contains 'fix'",
+            "passed": true,
+            "evidence": "OR satisfied by: contains 'feat' \u2014 Substring found: 'feat'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 1.0,
+        "summary": "With skill: 100% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 14,
+          "token_counts": {
+            "input_tokens": 118750,
+            "output_tokens": 708,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 39.34901947504841
+        },
+        "raw_output": "Let me validate your PR title and fix it.Your title doesn't follow the required format. Here's the corrected version:\n\n**`[TEAM-42] feat: add login feature`**\n\nIssues fixed:\n- Added the `[TEAM-42]` ticket prefix in brackets\n- Added the `feat` type tag (since this is a new feature)\n- Changed \"added\" to \"add\" (use imperative mood)\n- Removed the trailing ticket reference since it's already in the prefix\n\nLet me verify the fix:The corrected title passes validation: **`[TEAM-42] feat: add login feature`**"
+      },
+      "without_skill": {
+        "eval_id": "suggest-fix",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains '[TEAM-42]'",
+            "passed": true,
+            "evidence": "Substring found: '[team-42]'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'feat' or contains 'fix'",
+            "passed": true,
+            "evidence": "OR satisfied by: contains 'feat' \u2014 Substring found: 'feat'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 1.0,
+        "summary": "Without skill: 100% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 4,
+          "token_counts": {
+            "input_tokens": 67893,
+            "output_tokens": 598,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 17.797454631887376
+        },
+        "raw_output": "I don't have context on your team's PR naming convention. Let me check if there's any documented convention in the project or my memory.I don't have any documented PR naming convention for your project. Could you tell me what convention your team follows so I can fix the title?What PR naming convention does your team follow? For example:\n\n- **Conventional Commits**: `feat(TEAM-42): add login feature`\n- **Ticket prefix**: `TEAM-42: Add login feature`\n- **Type/scope**: `[Feature][TEAM-42] Add login feature`\n\nOr something else? Once I know the convention, I can suggest the corrected title."
+      },
+      "delta_pass_rate": 0.0
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "mean_pass_rate": 1.0,
+      "stddev_pass_rate": 0.0,
+      "mean_tokens": 804.5,
+      "mean_input_tokens": 157759.5,
+      "mean_output_tokens": 804.5,
+      "mean_total_tokens": 158564.0,
+      "mean_tool_calls": 14.7
+    },
+    "without_skill": {
+      "mean_pass_rate": 0.8333,
+      "stddev_pass_rate": 0.4082,
+      "mean_tokens": 349.2,
+      "mean_input_tokens": 37462.0,
+      "mean_output_tokens": 349.2,
+      "mean_total_tokens": 37811.2,
+      "mean_tool_calls": 1.3
+    },
+    "delta": {
+      "pass_rate": 0.1667,
+      "tokens": 455.3,
+      "total_tokens": 120752.8,
+      "input_tokens": 120297.5,
+      "tool_calls": 13.3
+    },
+    "cost_efficiency": {
+      "quality_delta": 0.1667,
+      "cost_delta_pct": 319.4,
+      "classification": "TRADEOFF",
+      "emoji": "\ud83d\udfe1",
+      "description": "Skill improves quality but increases cost"
+    }
+  },
+  "scores": {
+    "outcome": 1.0,
+    "process": 1.0,
+    "style": 1.0,
+    "efficiency": 0.445,
+    "overall": 0.8612
+  },
+  "passed": true
+}

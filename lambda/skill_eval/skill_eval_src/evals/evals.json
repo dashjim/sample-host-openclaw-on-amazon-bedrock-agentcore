@@ -1,0 +1,58 @@
+[
+  {
+    "id": "audit-good-skill",
+    "prompt": "Run a security audit on the skill directory at files/good-skill/ and tell me its score and grade. Use the skill-eval CLI.",
+    "expected_output": "The good-skill scores 100/100 with Grade A. No critical findings, no warnings.",
+    "files": [],
+    "assertions": [
+      "contains '100'",
+      "contains 'A'",
+      "does not contain 'FAILED'"
+    ]
+  },
+  {
+    "id": "audit-bad-skill",
+    "prompt": "Run a security audit on the skill directory at files/insecure-installer/ and report what security issues you find. Use the skill-eval CLI.",
+    "expected_output": "The insecure-installer skill scores 0/100 with Grade F. Critical findings include curl|bash (SEC-004), pickle.load (SEC-006), and npx -y (SEC-009).",
+    "files": [],
+    "assertions": [
+      "contains 'F'",
+      "contains 'CRITICAL' or contains 'critical'",
+      "contains 'SEC-004' or contains 'curl'",
+      "does not contain 'Grade: A'"
+    ]
+  },
+  {
+    "id": "audit-permission-issues",
+    "prompt": "Audit the skill at files/over-permissioned/ for security and permission issues. What problems does it have? Use the skill-eval CLI.",
+    "expected_output": "The over-permissioned skill has issues with unrestricted Bash(*) access (PERM-001), sudo usage (PERM-004), and references to sensitive directories like ~/.ssh.",
+    "files": [],
+    "assertions": [
+      "contains 'PERM' or contains 'permission'",
+      "contains 'Bash' or contains 'bash'",
+      "contains 'sudo' or contains 'ssh'"
+    ]
+  },
+  {
+    "id": "compare-good-vs-bad",
+    "prompt": "Compare the audit results of files/good-skill/ and files/insecure-installer/. Which one is safer and why? Use the skill-eval CLI to audit both.",
+    "expected_output": "good-skill scores 100/A while insecure-installer scores 0/F. good-skill is much safer because insecure-installer has curl|bash, pickle.load, and npx -y patterns.",
+    "files": [],
+    "assertions": [
+      "contains '100' or contains 'Grade: A' or contains 'Grade A'",
+      "contains '0' or contains 'Grade: F' or contains 'Grade F'",
+      "contains 'good-skill'",
+      "contains 'insecure-installer'"
+    ]
+  },
+  {
+    "id": "init-scaffold",
+    "prompt": "I have a skill at files/good-skill/ that I want to evaluate. Generate evaluation scaffolds for it using skill-eval init.",
+    "expected_output": "Generated evals/evals.json with template eval cases and evals/eval_queries.json with template trigger queries for the good-skill.",
+    "files": [],
+    "assertions": [
+      "contains 'evals.json' or contains 'eval'",
+      "contains 'template' or contains 'generated' or contains 'created' or contains 'scaffold'"
+    ]
+  }
+]

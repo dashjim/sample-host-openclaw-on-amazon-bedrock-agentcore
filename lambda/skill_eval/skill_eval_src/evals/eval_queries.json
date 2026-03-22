@@ -1,0 +1,42 @@
+[
+  {
+    "query": "Check if this agent skill has any security vulnerabilities before I install it",
+    "should_trigger": true
+  },
+  {
+    "query": "Audit my skill for secrets, injection risks, and unsafe install patterns",
+    "should_trigger": true
+  },
+  {
+    "query": "Is this skill safe to add to my agent? Run a security scan.",
+    "should_trigger": true
+  },
+  {
+    "query": "Evaluate the quality of this skill — does it actually work?",
+    "should_trigger": true
+  },
+  {
+    "query": "Compare skill version 1 and version 2 to see which is better",
+    "should_trigger": true
+  },
+  {
+    "query": "Write a Python script that sorts a list of numbers",
+    "should_trigger": false
+  },
+  {
+    "query": "What's the weather forecast for Sydney this weekend?",
+    "should_trigger": false
+  },
+  {
+    "query": "Help me debug this React component that's not rendering",
+    "should_trigger": false
+  },
+  {
+    "query": "Translate this paragraph from English to French",
+    "should_trigger": false
+  },
+  {
+    "query": "Summarize the key points from this PDF document",
+    "should_trigger": false
+  }
+]

@@ -1,0 +1,58 @@
+[
+  {
+    "id": "valid-title-standard",
+    "prompt": "Check if this PR title follows our naming convention: [TEAM-42] feat: add user authentication",
+    "expected_output": "The title is valid. It follows the format [TEAM-<number>] <type>: <description>.",
+    "files": [],
+    "assertions": [
+      "contains 'valid' or contains 'Valid' or contains '✅' or contains 'correct' or contains 'follows'"
+    ]
+  },
+  {
+    "id": "invalid-title-missing-ticket",
+    "prompt": "Is this PR title correct? 'fix: resolve login bug'",
+    "expected_output": "Invalid. Missing ticket number. Should be [TEAM-<number>] fix: resolve login bug.",
+    "files": [],
+    "assertions": [
+      "contains 'invalid' or contains 'Invalid' or contains '❌' or contains 'missing' or contains 'TEAM'"
+    ]
+  },
+  {
+    "id": "invalid-title-bad-type",
+    "prompt": "Check this PR title: [TEAM-99] yolo: ship it fast",
+    "expected_output": "Invalid. 'yolo' is not a valid type. Valid types are: feat, fix, docs, refactor, test, chore.",
+    "files": [],
+    "assertions": [
+      "contains 'invalid' or contains 'Invalid' or contains 'not' or contains 'yolo'",
+      "contains 'feat' or contains 'fix' or contains 'type'"
+    ]
+  },
+  {
+    "id": "valid-branch",
+    "prompt": "Is this branch name following our convention? platform/TEAM-42-add-auth",
+    "expected_output": "Valid branch name. Follows the <team>/<ticket>-<description> format.",
+    "files": [],
+    "assertions": [
+      "contains 'valid' or contains 'Valid' or contains '✅' or contains 'correct' or contains 'follows'"
+    ]
+  },
+  {
+    "id": "invalid-branch-no-ticket",
+    "prompt": "Check this branch name: feature/login-page",
+    "expected_output": "Invalid. Missing TEAM ticket number. Should be <team>/TEAM-<number>-<description>.",
+    "files": [],
+    "assertions": [
+      "contains 'invalid' or contains 'Invalid' or contains '❌' or contains 'missing' or contains 'TEAM' or contains 'format'"
+    ]
+  },
+  {
+    "id": "suggest-fix",
+    "prompt": "My PR title is 'added login feature for TEAM-42'. Can you fix it to follow our naming convention?",
+    "expected_output": "[TEAM-42] feat: add login feature",
+    "files": [],
+    "assertions": [
+      "contains '[TEAM-42]'",
+      "contains 'feat' or contains 'fix'"
+    ]
+  }
+]

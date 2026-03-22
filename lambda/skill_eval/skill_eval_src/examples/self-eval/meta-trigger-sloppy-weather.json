@@ -1,0 +1,81 @@
+{
+  "skill_name": "sloppy-weather",
+  "skill_path": "./examples/golden-dataset/bad-skills/sloppy-weather",
+  "query_results": [
+    {
+      "query": "What's the weather like in Sydney today?",
+      "should_trigger": true,
+      "trigger_count": 1,
+      "run_count": 1,
+      "trigger_rate": 1.0,
+      "passed": true,
+      "mean_input_tokens": 68557.0,
+      "mean_output_tokens": 500.0,
+      "mean_total_tokens": 69057.0
+    },
+    {
+      "query": "Is it going to rain tomorrow in London?",
+      "should_trigger": true,
+      "trigger_count": 1,
+      "run_count": 1,
+      "trigger_rate": 1.0,
+      "passed": true,
+      "mean_input_tokens": 91594.0,
+      "mean_output_tokens": 515.0,
+      "mean_total_tokens": 92109.0
+    },
+    {
+      "query": "Get me the current temperature for Tokyo",
+      "should_trigger": true,
+      "trigger_count": 1,
+      "run_count": 1,
+      "trigger_rate": 1.0,
+      "passed": true,
+      "mean_input_tokens": 91382.0,
+      "mean_output_tokens": 786.0,
+      "mean_total_tokens": 92168.0
+    },
+    {
+      "query": "Write a Python function to sort a list",
+      "should_trigger": false,
+      "trigger_count": 0,
+      "run_count": 1,
+      "trigger_rate": 0.0,
+      "passed": true,
+      "mean_input_tokens": 22592.0,
+      "mean_output_tokens": 52.0,
+      "mean_total_tokens": 22644.0
+    },
+    {
+      "query": "Help me debug this React component",
+      "should_trigger": false,
+      "trigger_count": 0,
+      "run_count": 1,
+      "trigger_rate": 0.0,
+      "passed": true,
+      "mean_input_tokens": 22590.0,
+      "mean_output_tokens": 119.0,
+      "mean_total_tokens": 22709.0
+    },
+    {
+      "query": "Summarize this PDF document for me",
+      "should_trigger": false,
+      "trigger_count": 0,
+      "run_count": 1,
+      "trigger_rate": 0.0,
+      "passed": true,
+      "mean_input_tokens": 22592.0,
+      "mean_output_tokens": 94.0,
+      "mean_total_tokens": 22686.0
+    }
+  ],
+  "summary": {
+    "total_queries": 6,
+    "passed": 6,
+    "failed": 0,
+    "trigger_precision": 1.0,
+    "no_trigger_precision": 1.0,
+    "mean_total_tokens_per_run": 53562.2
+  },
+  "passed": true
+}

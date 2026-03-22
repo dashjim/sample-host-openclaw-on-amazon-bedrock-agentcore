@@ -1,0 +1,103 @@
+{
+  "skill_name": "pr-naming",
+  "skill_path": "./examples/lifecycle-demo/v1",
+  "query_results": [
+    {
+      "query": "Check if this PR title follows our naming convention",
+      "should_trigger": true,
+      "trigger_count": 1,
+      "run_count": 1,
+      "trigger_rate": 1.0,
+      "passed": true,
+      "mean_input_tokens": 94434.0,
+      "mean_output_tokens": 585.0,
+      "mean_total_tokens": 95019.0
+    },
+    {
+      "query": "Is this branch name correct: platform/TEAM-42-add-auth",
+      "should_trigger": true,
+      "trigger_count": 1,
+      "run_count": 1,
+      "trigger_rate": 1.0,
+      "passed": true,
+      "mean_input_tokens": 117830.0,
+      "mean_output_tokens": 560.0,
+      "mean_total_tokens": 118390.0
+    },
+    {
+      "query": "What's the PR naming format we use?",
+      "should_trigger": true,
+      "trigger_count": 0,
+      "run_count": 1,
+      "trigger_rate": 0.0,
+      "passed": false,
+      "mean_input_tokens": 92965.0,
+      "mean_output_tokens": 495.0,
+      "mean_total_tokens": 93460.0
+    },
+    {
+      "query": "Fix my PR title to follow the convention",
+      "should_trigger": true,
+      "trigger_count": 0,
+      "run_count": 1,
+      "trigger_rate": 0.0,
+      "passed": false,
+      "mean_input_tokens": 173689.0,
+      "mean_output_tokens": 1410.0,
+      "mean_total_tokens": 175099.0
+    },
+    {
+      "query": "Write me a Python function to sort a list",
+      "should_trigger": false,
+      "trigger_count": 0,
+      "run_count": 1,
+      "trigger_rate": 0.0,
+      "passed": true,
+      "mean_input_tokens": 22601.0,
+      "mean_output_tokens": 52.0,
+      "mean_total_tokens": 22653.0
+    },
+    {
+      "query": "What's the weather in Sydney?",
+      "should_trigger": false,
+      "trigger_count": 0,
+      "run_count": 1,
+      "trigger_rate": 0.0,
+      "passed": true,
+      "mean_input_tokens": 22599.0,
+      "mean_output_tokens": 94.0,
+      "mean_total_tokens": 22693.0
+    },
+    {
+      "query": "Help me debug this React component",
+      "should_trigger": false,
+      "trigger_count": 0,
+      "run_count": 1,
+      "trigger_rate": 0.0,
+      "passed": true,
+      "mean_input_tokens": 22598.0,
+      "mean_output_tokens": 85.0,
+      "mean_total_tokens": 22683.0
+    },
+    {
+      "query": "Deploy my application to production",
+      "should_trigger": false,
+      "trigger_count": 0,
+      "run_count": 1,
+      "trigger_rate": 0.0,
+      "passed": true,
+      "mean_input_tokens": 45644.0,
+      "mean_output_tokens": 506.0,
+      "mean_total_tokens": 46150.0
+    }
+  ],
+  "summary": {
+    "total_queries": 8,
+    "passed": 6,
+    "failed": 2,
+    "trigger_precision": 0.5,
+    "no_trigger_precision": 1.0,
+    "mean_total_tokens_per_run": 74518.4
+  },
+  "passed": false
+}

@@ -1,0 +1,560 @@
+{
+  "skill_name": "skill-eval",
+  "skill_path": ".",
+  "eval_count": 5,
+  "runs_per_eval": 1,
+  "metadata": {
+    "timestamp": "2026-03-15T08:03:15Z"
+  },
+  "runs": [
+    {
+      "eval_id": "audit-good-skill",
+      "run_index": 0,
+      "with_skill": {
+        "eval_id": "audit-good-skill",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains '100'",
+            "passed": true,
+            "evidence": "Substring found: '100'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'A'",
+            "passed": true,
+            "evidence": "Substring found: 'a'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "does not contain 'CRITICAL'",
+            "passed": false,
+            "evidence": "Substring found (FAIL): 'critical'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "does not contain 'FAILED'",
+            "passed": true,
+            "evidence": "Substring not found (OK): 'failed'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 0.75,
+        "summary": "With skill: 75% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 0,
+          "token_counts": {
+            "input_tokens": 158981,
+            "output_tokens": 1370,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 85.11145413597114
+        },
+        "raw_output": "The audit completed successfully. Here are the results:\n\n- **Score: 100/100**\n- **Grade: A**\n- **Result: PASSED** (no critical findings)\n\nThe breakdown:\n- **CRITICAL findings:** 0\n- **WARNING findings:** 0\n- **INFO findings:** 0\n\nThe `good-skill` lives up to its name \u2014 it's a perfectly clean skill with zero security findings across all three check categories (structure, security, and permissions)."
+      },
+      "without_skill": {
+        "eval_id": "audit-good-skill",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains '100'",
+            "passed": true,
+            "evidence": "Substring found: '100'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'A'",
+            "passed": true,
+            "evidence": "Substring found: 'a'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "does not contain 'CRITICAL'",
+            "passed": false,
+            "evidence": "Substring found (FAIL): 'critical'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "does not contain 'FAILED'",
+            "passed": true,
+            "evidence": "Substring not found (OK): 'failed'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 0.75,
+        "summary": "Without skill: 75% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 0,
+          "token_counts": {
+            "input_tokens": 162883,
+            "output_tokens": 1010,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 27.682263819966465
+        },
+        "raw_output": "The security audit results for `good-skill`:\n\n- **Score:** 100/100\n- **Grade:** A\n- **Result:** PASSED (no critical findings)\n- **Findings:** 0 critical, 0 warnings, 0 info\n\nThis skill has a perfect security score with no issues detected."
+      },
+      "delta_pass_rate": 0.0
+    },
+    {
+      "eval_id": "audit-bad-skill",
+      "run_index": 0,
+      "with_skill": {
+        "eval_id": "audit-bad-skill",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains 'F'",
+            "passed": true,
+            "evidence": "Substring found: 'f'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'CRITICAL' or contains 'critical'",
+            "passed": false,
+            "evidence": "Substring not found: \"critical' or contains 'critical\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'SEC-004' or contains 'curl'",
+            "passed": false,
+            "evidence": "Substring not found: \"sec-004' or contains 'curl\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "does not contain 'Grade: A'",
+            "passed": true,
+            "evidence": "Substring not found (OK): 'grade: a'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 0.5,
+        "summary": "With skill: 50% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 0,
+          "token_counts": {
+            "input_tokens": 289973,
+            "output_tokens": 2369,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 82.08968564402312
+        },
+        "raw_output": "## Audit Results: `insecure-installer` \u2014 Grade F (0/100)\n\nThe skill **failed catastrophically** with **6 critical**, **1 warning**, and **2 info** findings. Here's a summary:\n\n### Critical Findings (6)\n\n| Code | Issue | Location |\n|------|-------|----------|\n| **SEC-004** | `curl \\| bash` \u2014 pipes remote script directly to shell | `SKILL.md:14` |\n| **SEC-004** | `wget \\| sh` \u2014 same supply chain risk pattern | `SKILL.md:17` |\n| **SEC-009** | `npx -y` auto-installs unverified MCP server package | `SKILL.md:20` |\n| **SEC-009** | `npx -y` auto-installs another unknown MCP package | `SKILL.md:21` |\n| **SEC-004** | `curl \\| bash` with f-string interpolation in Python code | `scripts/installer.py:9` |\n| **SEC-006** | `pickle.load()` \u2014 unsafe deserialization that can execute arbitrary code | `scripts/installer.py:18` |\n\n### Warning (1)\n\n| Code | Issue | Location |\n|------|-------|----------|\n| **SEC-003** | `subprocess.run()` with `shell=True` \u2014 allows shell injection | `scripts/installer.py:10` |\n\n### Info (2)\n\n| Code | Issue | Location |\n|------|-------|----------|\n| **STR-017** | Missing shebang line in Python script | `scripts/installer.py:1` |\n| **SEC-003** | General subprocess execution detected | `scripts/installer.py:8` |\n\n### Key Takeaways\n\n1. **Supply chain attacks**: The skill uses `curl | bash` and `wget | sh` patterns in three places \u2014 this downloads and executes arbitrary remote code with no verification, making it trivially exploitable.\n2. **Unsafe deserialization**: `pickle.load()` can execute arbitrary Python code during deserialization. If an attacker modifies the cache file, they achieve code execution. Should use `json` instead.\n3. **Shell injection**: `subprocess.run()` with `shell=True` and an f-string (`f\"curl ... {tool_name}.sh | bash\"`) means a malicious `tool_name` value could inject arbitrary shell commands.\n4. **Unverified MCP packages**: `npx -y` auto-installs and runs packages without any verification \u2014 another supply chain vector.\n\nThis skill s"
+      },
+      "without_skill": {
+        "eval_id": "audit-bad-skill",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains 'F'",
+            "passed": true,
+            "evidence": "Substring found: 'f'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'CRITICAL' or contains 'critical'",
+            "passed": false,
+            "evidence": "Substring not found: \"critical' or contains 'critical\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'SEC-004' or contains 'curl'",
+            "passed": false,
+            "evidence": "Substring not found: \"sec-004' or contains 'curl\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "does not contain 'Grade: A'",
+            "passed": true,
+            "evidence": "Substring not found (OK): 'grade: a'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 0.5,
+        "summary": "Without skill: 50% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 0,
+          "token_counts": {
+            "input_tokens": 122692,
+            "output_tokens": 1357,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 61.62551840394735
+        },
+        "raw_output": "## Security Audit Results: `insecure-installer`\n\n**Score: 0/100 (Grade: F)** \u2014 6 critical findings, 1 warning, 2 informational.\n\n### Critical Findings (6)\n\n| Code | Issue | Location | Description |\n|------|-------|----------|-------------|\n| **SEC-004** | `curl \\| sh` | `SKILL.md:14` | Pipes `curl` output directly to `bash` \u2014 supply chain risk |\n| **SEC-004** | `wget \\| sh` | `SKILL.md:17` | Pipes `wget` output directly to `sh` \u2014 supply chain risk |\n| **SEC-009** | `npx -y` external package | `SKILL.md:20` | Auto-installs and runs `@example/mcp-server-tools` without verification |\n| **SEC-009** | `npx -y` external package | `SKILL.md:21` | Auto-installs and runs `some-unknown-mcp-package` without verification |\n| **SEC-004** | `curl \\| sh` in Python | `installer.py:9` | `install_tool()` dynamically constructs a curl-pipe-bash command with user-controlled `tool_name` |\n| **SEC-006** | Unsafe deserialization | `installer.py:18` | `pickle.load()` can execute arbitrary code when loading a tampered cache file |\n\n### Warning (1)\n\n| Code | Issue | Location | Description |\n|------|-------|----------|-------------|\n| **SEC-003** | `shell=True` | `installer.py:10` | `subprocess.run()` with `shell=True` enables shell injection, especially since `tool_name` is interpolated into the command string |\n\n### Informational (2)\n\n- **STR-017**: `installer.py` is missing a shebang line (`#!/usr/bin/env python3`)\n- **SEC-003**: General subprocess usage detected in `installer.py:8`\n\n### Summary of Risks\n\n1. **Supply chain attacks (SEC-004)**: Three instances of piping remote scripts directly into a shell. An attacker who compromises the URL serves malicious code to all users.\n2. **MCP server supply chain (SEC-009)**: Two `npx -y` calls auto-install and execute unverified npm packages that could intercept agent communications or exfiltrate data.\n3. **Arbitrary code execution via pickle (SEC-006)**: `pickle.load()` deserializes arbitrary Python objects \u2014 a tampered `cache.pkl` file can run "
+      },
+      "delta_pass_rate": 0.0
+    },
+    {
+      "eval_id": "audit-permission-issues",
+      "run_index": 0,
+      "with_skill": {
+        "eval_id": "audit-permission-issues",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains 'PERM' or contains 'permission'",
+            "passed": false,
+            "evidence": "Substring not found: \"perm' or contains 'permission\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'Bash' or contains 'bash'",
+            "passed": false,
+            "evidence": "Substring not found: \"bash' or contains 'bash\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'sudo' or contains 'ssh'",
+            "passed": false,
+            "evidence": "Substring not found: \"sudo' or contains 'ssh\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 0.0,
+        "summary": "With skill: 0% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 0,
+          "token_counts": {
+            "input_tokens": 183425,
+            "output_tokens": 1872,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 97.34625251498073
+        },
+        "raw_output": "Here are the results of the `skill-eval audit` on the **over-permissioned** skill:\n\n## Score: 58/100 \u2014 Grade: F\n\nThe audit found **4 warnings** and **1 info-level finding**, all in the permissions category:\n\n### Problems Found\n\n1. **[PERM-001] Unrestricted Bash/Shell access** (WARNING)\n   - The skill declares `Bash(*)` in `allowed-tools`, granting it the ability to execute **arbitrary system commands**. A file organizer should only need scoped commands like `Bash(mv:*) Bash(find:*)`, not a full shell.\n\n2. **[PERM-004] References root/sudo access** (WARNING)\n   - Line 30 of SKILL.md uses `sudo find /home -type f -exec ...`, instructing the agent to run commands with **root privileges**. A file organizer has no business running as root.\n\n3. **[PERM-004] References sensitive directory access \u2014 `~/.ssh/`** (WARNING)\n   - Line 38 tells the agent to read `~/.ssh/known_hosts`. There is no legitimate reason for a file organizer to access SSH configuration.\n\n4. **[PERM-004] References sensitive directory access \u2014 `~/.aws/`** (WARNING)\n   - Line 39 tells the agent to access `~/.aws/credentials` for \"S3 backup targets.\" This exposes AWS secrets to a skill that should only be sorting local files.\n\n5. **[PERM-005] References absolute system path `/etc/passwd`** (INFO)\n   - Line 40 reads `/etc/passwd` for \"user home directory detection.\" Skills should operate within the workspace, not read system files.\n\n### Additional Observations (beyond what the audit flagged)\n\n- The `scripts/organize.sh` also uses `sudo mv` on every operation, reinforcing the unnecessary privilege escalation.\n- The `allowed-tools` list includes `delete_file` and `execute_command`, which are overkill for a file sorting utility.\n- The skill's description says it \"sorts files into directories based on type\" \u2014 none of the sensitive directory access (`~/.ssh`, `~/.aws`, `/etc/passwd`) is needed for that purpose.\n\n### Summary\n\nThis skill is a textbook example of **violating the principle of least privilege**. It re"
+      },
+      "without_skill": {
+        "eval_id": "audit-permission-issues",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains 'PERM' or contains 'permission'",
+            "passed": false,
+            "evidence": "Substring not found: \"perm' or contains 'permission\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'Bash' or contains 'bash'",
+            "passed": false,
+            "evidence": "Substring not found: \"bash' or contains 'bash\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'sudo' or contains 'ssh'",
+            "passed": false,
+            "evidence": "Substring not found: \"sudo' or contains 'ssh\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 0.0,
+        "summary": "Without skill: 0% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 0,
+          "token_counts": {
+            "input_tokens": 172383,
+            "output_tokens": 1679,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 72.26180773111992
+        },
+        "raw_output": "Here's the full security audit of the `over-permissioned` skill using the skill-eval CLI.\n\n## Audit Results: Score 58/100 (Grade: F)\n\nThe skill-eval audit found **4 warnings** and **1 info** \u2014 all in the **permissions** category. Here are the specific problems:\n\n### 1. **[PERM-001] Unrestricted Bash/Shell access** (Warning)\nThe skill declares `Bash(*)` in its `allowed-tools`, granting it the ability to execute **any arbitrary system command**. This is a wildcard that should be scoped to only the specific commands the skill needs (e.g., `Bash(mv:*) Bash(find:*)`).\n\n### 2. **[PERM-004] Requires sudo/root privileges** (Warning)\nLine 30 runs `sudo find /home -type f -exec scripts/organize.sh {} \\;`, and the `organize.sh` script itself uses `sudo mv` on every operation (lines 8, 11, 14, 17). A file organizer has no legitimate need for root privileges \u2014 this is a classic over-privileging problem.\n\n### 3. **[PERM-004] Accesses sensitive directories** (2 Warnings)\nThe skill claims it needs to read:\n- **`~/.ssh/known_hosts`** (line 38) \u2014 SSH host keys have nothing to do with file organization\n- **`~/.aws/credentials`** (line 39) \u2014 AWS secret keys are extremely sensitive; claimed purpose (\"S3 backup targets\") is far beyond a file organizer's scope\n\n### 4. **[PERM-005] References absolute system paths** (Info)\n- **`/etc/passwd`** (line 40) \u2014 Reading the system password file for \"user home directory detection\" is unnecessary when the skill should operate within the user's workspace.\n\n### Summary of Problems\n\nThis skill is a textbook example of **over-permissioning**:\n\n| Issue | What it requests | What it actually needs |\n|-------|-----------------|----------------------|\n| Shell access | `Bash(*)` (unrestricted) | Scoped to `mv`, `find`, `mkdir` at most |\n| Privilege level | `sudo` (root) | Normal user permissions |\n| File access | `~/.ssh/`, `~/.aws/`, `/etc/passwd` | Only the target directory being organized |\n| Tool count | 10 tools including `execute_command`, `delete_file`"
+      },
+      "delta_pass_rate": 0.0
+    },
+    {
+      "eval_id": "compare-good-vs-bad",
+      "run_index": 0,
+      "with_skill": {
+        "eval_id": "compare-good-vs-bad",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains '100' or contains 'Grade: A' or contains 'Grade A'",
+            "passed": false,
+            "evidence": "Substring not found: \"100' or contains 'grade: a' or contains 'grade a\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains '0' or contains 'Grade: F' or contains 'Grade F'",
+            "passed": false,
+            "evidence": "Substring not found: \"0' or contains 'grade: f' or contains 'grade f\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'good-skill'",
+            "passed": true,
+            "evidence": "Substring found: 'good-skill'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'insecure-installer'",
+            "passed": true,
+            "evidence": "Substring found: 'insecure-installer'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 0.5,
+        "summary": "With skill: 50% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 0,
+          "token_counts": {
+            "input_tokens": 393654,
+            "output_tokens": 3500,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 117.88085328205489
+        },
+        "raw_output": "## Audit Comparison: `good-skill` vs `insecure-installer`\n\n### Score Summary\n\n| | `good-skill` | `insecure-installer` |\n|---|---|---|\n| **Score** | 100/100 | 0/100 |\n| **Grade** | **A** | **F** |\n| **Critical** | 0 | 6 |\n| **Warning** | 0 | 1 |\n| **Info** | 0 | 2 |\n| **Result** | PASSED | FAILED |\n\n### `good-skill` is dramatically safer. Here's why:\n\n**`good-skill`** is a clean, well-structured skill with zero findings:\n- Proper SKILL.md frontmatter (name, description, license, metadata)\n- Scripts use only safe standard library modules (`sys`, `json`, `pathlib`)\n- No external network calls, no shell execution, no unsafe deserialization\n\n**`insecure-installer`** has **6 critical vulnerabilities** across two major attack categories:\n\n#### 1. Supply Chain Attacks (4 critical findings)\n- **`curl | bash` and `wget | sh` patterns** (SEC-004) \u2014 Piping remote scripts directly into a shell is extremely dangerous. An attacker who compromises the remote server (or performs a MITM attack) can execute arbitrary code on the user's machine. Found in both `SKILL.md` (lines 14, 17) and `scripts/installer.py` (line 9).\n- **`npx -y` with unknown packages** (SEC-009) \u2014 The `-y` flag auto-installs and runs packages without confirmation. Two unknown MCP server packages are installed this way, creating a supply chain attack vector.\n\n#### 2. Code Execution Vulnerabilities (2 critical + 1 warning)\n- **`pickle.load()` deserialization** (SEC-006, critical) \u2014 Python's pickle module can execute arbitrary code during deserialization. A malicious `.pkl` cache file could compromise the system.\n- **`subprocess.run()` with `shell=True`** (SEC-003, warning) \u2014 Combined with an f-string containing user input (`tool_name`), this is a shell injection vulnerability.\n\n### Bottom Line\n\n`good-skill` follows security best practices with a perfect score. `insecure-installer` is a textbook example of dangerous patterns \u2014 remote code execution via curl-pipe-shell, unsafe deserialization, shell injection, and unv"
+      },
+      "without_skill": {
+        "eval_id": "compare-good-vs-bad",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains '100' or contains 'Grade: A' or contains 'Grade A'",
+            "passed": false,
+            "evidence": "Substring not found: \"100' or contains 'grade: a' or contains 'grade a\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains '0' or contains 'Grade: F' or contains 'Grade F'",
+            "passed": false,
+            "evidence": "Substring not found: \"0' or contains 'grade: f' or contains 'grade f\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'good-skill'",
+            "passed": true,
+            "evidence": "Substring found: 'good-skill'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'insecure-installer'",
+            "passed": true,
+            "evidence": "Substring found: 'insecure-installer'",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 0.5,
+        "summary": "Without skill: 50% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 0,
+          "token_counts": {
+            "input_tokens": 122159,
+            "output_tokens": 1611,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 46.96958730905317
+        },
+        "raw_output": "## Audit Comparison\n\n### `good-skill` \u2014 Score: **100/100 (Grade: A)** \u2014 PASSED\n\n| Severity | Count |\n|----------|-------|\n| Critical | 0 |\n| Warning | 0 |\n| Info | 0 |\n\nZero findings. Clean bill of health.\n\n---\n\n### `insecure-installer` \u2014 Score: **0/100 (Grade: F)** \u2014 FAILED\n\n| Severity | Count |\n|----------|-------|\n| Critical | 6 |\n| Warning | 1 |\n| Info | 2 |\n\nThe 6 critical findings break down into three categories:\n\n1. **`curl | sh` / `wget | sh` pipe-to-shell patterns (SEC-004)** \u2014 3 findings\n   - `SKILL.md:14` \u2014 `curl -fsSL ... | bash`\n   - `SKILL.md:17` \u2014 `wget -qO- ... | sh`\n   - `scripts/installer.py:9` \u2014 `curl ... | bash` in a subprocess call\n   \n   These download and execute arbitrary remote code at runtime. If the remote URL is compromised, every user gets malicious code.\n\n2. **Unvetted MCP server installs via `npx -y` (SEC-009)** \u2014 2 findings\n   - `SKILL.md:20` \u2014 `npx -y @example/mcp-server-tools`\n   - `SKILL.md:21` \u2014 `npx -y some-unknown-mcp-package`\n   \n   `npx -y` auto-installs and runs packages without confirmation. A malicious MCP server can intercept agent communications or exfiltrate data.\n\n3. **Unsafe deserialization with `pickle.load` (SEC-006)** \u2014 1 finding\n   - `scripts/installer.py:18` \u2014 `pickle.load(f)`\n   \n   Pickle deserialization executes arbitrary Python code embedded in the data. A tampered `.pkl` file becomes a code execution vector.\n\nAdditionally, there's a **warning** for `shell=True` in `subprocess.run` (SEC-003), which enables shell injection attacks.\n\n---\n\n### Verdict: `good-skill` is dramatically safer\n\n`good-skill` scores a perfect 100/100 because it uses safe standard library operations (`pathlib`, `json`) with no network calls, no shell execution, and no deserialization of untrusted data.\n\n`insecure-installer` scores 0/100 because it combines multiple high-risk patterns \u2014 **supply chain attacks** (pipe-to-shell, unvetted npx packages), **arbitrary code execution** (pickle deserialization), and **shell injection** (subprocess"
+      },
+      "delta_pass_rate": 0.0
+    },
+    {
+      "eval_id": "init-scaffold",
+      "run_index": 0,
+      "with_skill": {
+        "eval_id": "init-scaffold",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains 'evals.json' or contains 'eval'",
+            "passed": false,
+            "evidence": "Substring not found: \"evals.json' or contains 'eval\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'template' or contains 'generated' or contains 'created' or contains 'scaffold'",
+            "passed": false,
+            "evidence": "Substring not found: \"template' or contains 'generated' or contains 'created' or contains 'scaffold\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 0.0,
+        "summary": "With skill: 0% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 0,
+          "token_counts": {
+            "input_tokens": 100832,
+            "output_tokens": 1439,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 74.95661875396036
+        },
+        "raw_output": "The working directory `/tmp/skill-eval-1rlinl01/` is currently empty \u2014 there's no `files/good-skill/` directory present. Before I can run `skill-eval init`, the skill needs to exist at that path.\n\nCould you check if the skill files need to be created or copied there first? Or is the path different from what you expected?"
+      },
+      "without_skill": {
+        "eval_id": "init-scaffold",
+        "run_index": 0,
+        "assertion_results": [
+          {
+            "text": "contains 'evals.json' or contains 'eval'",
+            "passed": false,
+            "evidence": "Substring not found: \"evals.json' or contains 'eval\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          },
+          {
+            "text": "contains 'template' or contains 'generated' or contains 'created' or contains 'scaffold'",
+            "passed": false,
+            "evidence": "Substring not found: \"template' or contains 'generated' or contains 'created' or contains 'scaffold\"",
+            "method": "deterministic",
+            "confidence": 1.0,
+            "uncertain": false
+          }
+        ],
+        "pass_rate": 0.0,
+        "summary": "Without skill: 0% assertions passed",
+        "execution_metrics": {
+          "tool_calls": 0,
+          "token_counts": {
+            "input_tokens": 475880,
+            "output_tokens": 2020,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        },
+        "timing": {
+          "elapsed_seconds": 59.63157806592062
+        },
+        "raw_output": "`skill-eval init` generated two evaluation scaffold files in `files/good-skill/evals/`:\n\n**`evals.json`** \u2014 2 functional eval cases:\n- `good-skill-eval-1`: Tests using the skill with its described purpose, with assertions for relevance and non-empty output\n- `good-skill-eval-2`: Tests with a simple input, asserting no errors and that output matches the skill's purpose\n\n**`eval_queries.json`** \u2014 4 trigger queries:\n- 2 `should_trigger: true` queries (using the skill's description and name)\n- 2 `should_trigger: false` queries (unrelated topics like weather and haikus)\n\nThese are template scaffolds \u2014 you'll want to edit them with more realistic prompts and specific assertions before running `skill-eval functional` or `skill-eval trigger`. The auto-generated prompts are a bit awkward (e.g., \"Help me A well-structured test skill...\") since they template directly from the description."
+      },
+      "delta_pass_rate": 0.0
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "mean_pass_rate": 0.35,
+      "stddev_pass_rate": 0.3354,
+      "mean_tokens": 2110.0,
+      "mean_input_tokens": 225373.0,
+      "mean_output_tokens": 2110.0,
+      "mean_total_tokens": 227483.0,
+      "mean_tool_calls": 0.0
+    },
+    "without_skill": {
+      "mean_pass_rate": 0.35,
+      "stddev_pass_rate": 0.3354,
+      "mean_tokens": 1535.4,
+      "mean_input_tokens": 211199.4,
+      "mean_output_tokens": 1535.4,
+      "mean_total_tokens": 212734.8,
+      "mean_tool_calls": 0.0
+    },
+    "delta": {
+      "pass_rate": 0.0,
+      "tokens": 574.6,
+      "total_tokens": 14748.2,
+      "input_tokens": 14173.6,
+      "tool_calls": 0.0
+    },
+    "cost_efficiency": {
+      "quality_delta": 0.0,
+      "cost_delta_pct": 6.9,
+      "classification": "PARETO_WORSE",
+      "emoji": "\ud83d\udd34",
+      "description": "Skill increases cost without improving quality"
+    }
+  },
+  "scores": {
+    "outcome": 0.35,
+    "process": 0.0,
+    "style": 0.35,
+    "efficiency": 0.9665,
+    "overall": 0.4166
+  },
+  "passed": false
+}

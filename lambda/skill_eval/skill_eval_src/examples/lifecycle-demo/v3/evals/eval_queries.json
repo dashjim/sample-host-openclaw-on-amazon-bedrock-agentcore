@@ -1,0 +1,10 @@
+[
+  {"query": "Check if this PR title follows our naming convention", "should_trigger": true},
+  {"query": "Is this branch name correct: platform/TEAM-42-add-auth", "should_trigger": true},
+  {"query": "What's the PR naming format we use?", "should_trigger": true},
+  {"query": "Fix my PR title to follow the convention", "should_trigger": true},
+  {"query": "Write me a Python function to sort a list", "should_trigger": false},
+  {"query": "What's the weather in Sydney?", "should_trigger": false},
+  {"query": "Help me debug this React component", "should_trigger": false},
+  {"query": "Deploy my application to production", "should_trigger": false}
+]
