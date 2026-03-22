@@ -438,10 +438,15 @@ export default function Files() {
                           try {
                             const ns = selectedNs.namespace;
                             const path = skill.reportKey.slice(ns.length + 1);
-                            const data = await get<{ presignedUrl?: string }>(
+                            const data = await get<{ presignedUrl?: string; content?: string }>(
                               `/api/files/${ns}/${path}`
                             );
-                            if (data.presignedUrl) window.open(data.presignedUrl, '_blank');
+                            if (data.presignedUrl) {
+                              window.open(data.presignedUrl, '_blank');
+                            } else if (data.content) {
+                              const blob = new Blob([data.content], { type: 'text/html' });
+                              window.open(URL.createObjectURL(blob), '_blank');
+                            }
                           } catch { message.error('Failed to open report'); }
                         }}
                       >
