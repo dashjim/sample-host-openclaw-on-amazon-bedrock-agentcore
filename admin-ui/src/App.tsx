@@ -154,7 +154,8 @@ function AppLayout() {
         collapsible
         collapsed={collapsed}
         onCollapse={setCollapsed}
-        theme={isDark ? 'dark' : 'dark'}
+        theme="dark"
+        style={{ borderRadius: 0, border: 'none' }}
       >
         <div
           style={{
