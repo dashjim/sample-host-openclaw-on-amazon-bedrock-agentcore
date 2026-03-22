@@ -92,9 +92,10 @@ def _run_audit(skill_path):
             findings.append({
                 "code": f.code,
                 "severity": f.severity.value if hasattr(f.severity, "value") else str(f.severity),
-                "message": f.message,
-                "file": str(f.file) if f.file else None,
-                "line": f.line,
+                "message": f.title,
+                "detail": f.detail,
+                "file": str(f.file_path) if f.file_path else None,
+                "line": f.line_number,
             })
 
         return {
