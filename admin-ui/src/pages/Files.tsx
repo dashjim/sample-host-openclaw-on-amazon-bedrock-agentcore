@@ -284,14 +284,13 @@ export default function Files() {
     <div>
       <Title level={4}>Files</Title>
 
-      <Layout style={{ background: token.colorBgContainer, borderRadius: token.borderRadiusLG, minHeight: 500 }}>
+      <Layout style={{ background: 'transparent', minHeight: 500 }}>
         <Sider
           width={260}
           style={{
-            background: token.colorBgContainer,
+            background: 'transparent',
             borderRight: `1px solid ${token.colorBorderSecondary}`,
             overflow: 'auto',
-            borderRadius: `${token.borderRadiusLG}px 0 0 ${token.borderRadiusLG}px`,
           }}
         >
           <div style={{ padding: '12px 16px', fontWeight: 500 }}>
