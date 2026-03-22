@@ -13,7 +13,10 @@ from aws_cdk import (
     aws_cloudfront as cloudfront,
     aws_cloudfront_origins as origins,
     aws_cognito as cognito,
+    aws_events as events,
+    aws_events_targets as events_targets,
     aws_iam as iam,
+    aws_ecr_assets as ecr_assets,
     aws_lambda as _lambda,
     aws_logs as logs,
     aws_s3 as s3,
@@ -242,6 +245,121 @@ class AdminStack(Stack):
             )
         )
 
+        # ---- Skill Eval Lambda (container image) ----
+        skill_eval_timeout = int(self.node.try_get_context("skill_eval_lambda_timeout_seconds") or "900")
+        skill_eval_memory = int(self.node.try_get_context("skill_eval_lambda_memory_mb") or "1024")
+        default_model_id = self.node.try_get_context("default_model_id") or "us.anthropic.claude-sonnet-4-6"
+        skill_eval_schedule = self.node.try_get_context("skill_eval_schedule") or "rate(1 day)"
+        skill_eval_enabled = str(self.node.try_get_context("skill_eval_enabled") or "true").lower() == "true"
+
+        skill_eval_log_group = logs.LogGroup(
+            self,
+            "SkillEvalLogGroup",
+            log_group_name="/openclaw/lambda/skill-eval",
+            retention=retention_days(log_retention),
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+
+        self.skill_eval_fn = _lambda.DockerImageFunction(
+            self,
+            "SkillEvalFn",
+            function_name="openclaw-skill-eval",
+            code=_lambda.DockerImageCode.from_image_asset(
+                "lambda/skill_eval",
+                platform=ecr_assets.Platform.LINUX_ARM64,
+            ),
+            timeout=Duration.seconds(skill_eval_timeout),
+            memory_size=skill_eval_memory,
+            architecture=_lambda.Architecture.ARM_64,
+            environment={
+                "IDENTITY_TABLE_NAME": identity_table_name,
+                "S3_USER_FILES_BUCKET": s3_user_files_bucket_name,
+                "BEDROCK_MODEL_ID": default_model_id,
+                "CLAUDE_CODE_USE_BEDROCK": "1",
+                "AWS_REGION_OVERRIDE": region,
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "us.anthropic.claude-sonnet-4-6",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "us.anthropic.claude-opus-4-6-v1",
+            },
+            log_group=skill_eval_log_group,
+        )
+
+        # Skill Eval IAM — DynamoDB
+        self.skill_eval_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "dynamodb:Query",
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                ],
+                resources=[identity_table_arn],
+            )
+        )
+
+        # Skill Eval IAM — S3 (read skills + write reports)
+        self.skill_eval_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:ListBucket"],
+                resources=[f"arn:aws:s3:::{s3_user_files_bucket_name}"],
+            )
+        )
+        self.skill_eval_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject", "s3:PutObject"],
+                resources=[f"arn:aws:s3:::{s3_user_files_bucket_name}/*"],
+            )
+        )
+
+        # Skill Eval IAM — Bedrock (for Claude CLI functional/trigger eval)
+        self.skill_eval_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "bedrock:InvokeModel",
+                    "bedrock:InvokeModelWithResponseStream",
+                    "bedrock:ListInferenceProfiles",
+                ],
+                resources=[
+                    "arn:aws:bedrock:*::foundation-model/*",
+                    f"arn:aws:bedrock:{region}:{account}:inference-profile/*",
+                    "arn:aws:bedrock:*::inference-profile/*",
+                ],
+            )
+        )
+
+        # Skill Eval IAM — KMS
+        self.skill_eval_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["kms:Decrypt", "kms:GenerateDataKey"],
+                resources=[cmk_arn],
+            )
+        )
+
+        # Admin Lambda — permission to invoke skill-eval Lambda
+        self.admin_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["lambda:InvokeFunction"],
+                resources=[self.skill_eval_fn.function_arn],
+            )
+        )
+        # Pass skill-eval function name to admin Lambda
+        self.admin_fn.add_environment("SKILL_EVAL_FUNCTION_NAME", self.skill_eval_fn.function_name)
+
+        # ---- EventBridge Schedule (daily skill scan) ----
+        if skill_eval_enabled:
+            scan_rule = events.Rule(
+                self,
+                "SkillEvalScheduleRule",
+                rule_name="openclaw-skill-eval-daily",
+                schedule=events.Schedule.expression(skill_eval_schedule),
+                description="Daily skill security scan for all users",
+            )
+            scan_rule.add_target(
+                events_targets.LambdaFunction(
+                    self.skill_eval_fn,
+                    event=events.RuleTargetInput.from_object({"action": "scan-all"}),
+                )
+            )
+
         # ---- API Gateway HTTP API ----
         cf_domain = self.distribution.distribution_domain_name
 
@@ -289,6 +407,7 @@ class AdminStack(Stack):
             "/api/files",
             "/api/files/{namespace}",
             "/api/files/{namespace}/{proxy+}",
+            "/api/skill-eval/{namespace}",
         ]:
             self.http_api.add_routes(
                 path=path_pattern,
@@ -350,6 +469,35 @@ class AdminStack(Stack):
                 cdk_nag.NagPackSuppression(
                     id="AwsSolutions-L1",
                     reason="Python 3.13 is the latest stable runtime supported in all regions.",
+                ),
+            ],
+            apply_to_children=True,
+        )
+
+        cdk_nag.NagSuppressions.add_resource_suppressions(
+            self.skill_eval_fn,
+            [
+                cdk_nag.NagPackSuppression(
+                    id="AwsSolutions-IAM4",
+                    reason="Lambda basic execution role is AWS-recommended for CloudWatch Logs.",
+                    applies_to=[
+                        "Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+                    ],
+                ),
+                cdk_nag.NagPackSuppression(
+                    id="AwsSolutions-IAM5",
+                    reason="Skill eval Lambda needs: S3 wildcard scoped to user files bucket, "
+                    "Bedrock wildcard for cross-region inference profiles.",
+                    applies_to=[
+                        f"Resource::arn:aws:s3:::{s3_user_files_bucket_name}/*",
+                        "Resource::arn:aws:bedrock:*::foundation-model/*",
+                        f"Resource::arn:aws:bedrock:{region}:{account}:inference-profile/*",
+                        "Resource::arn:aws:bedrock:*::inference-profile/*",
+                    ],
+                ),
+                cdk_nag.NagPackSuppression(
+                    id="AwsSolutions-L1",
+                    reason="Container image Lambda does not use managed runtimes.",
                 ),
             ],
             apply_to_children=True,

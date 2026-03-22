@@ -22,6 +22,7 @@ TELEGRAM_SECRET_ID = os.environ.get("TELEGRAM_SECRET_ID", "")
 SLACK_SECRET_ID = os.environ.get("SLACK_SECRET_ID", "")
 FEISHU_SECRET_ID = os.environ.get("FEISHU_SECRET_ID", "")
 ROUTER_API_URL = os.environ.get("ROUTER_API_URL", "")
+SKILL_EVAL_FUNCTION_NAME = os.environ.get("SKILL_EVAL_FUNCTION_NAME", "")
 
 # --- AWS Clients ---
 dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
@@ -32,6 +33,7 @@ s3_client = boto3.client(
 )
 secrets_client = boto3.client("secretsmanager", region_name=AWS_REGION)
 scheduler_client = boto3.client("scheduler", region_name=AWS_REGION)
+lambda_client = boto3.client("lambda", region_name=AWS_REGION)
 
 # --- Secret cache (15 min TTL) ---
 _SECRET_CACHE_TTL = 900
@@ -713,6 +715,87 @@ def _handle_delete_file(event):
     admin_sub = _get_admin_sub(event)
     _audit_log(admin_sub, "DELETE_FILE", s3_key)
     return _json_response(200, {"message": f"Deleted {file_path}"})
+
+
+# ---- Skill Eval ----
+
+@route("GET", "/api/skill-eval/{namespace}")
+def _handle_get_skill_eval(event):
+    """GET /api/skill-eval/{namespace} — get latest scan result for a user."""
+    namespace = event["pathParameters"]["namespace"]
+    if not _validate_namespace(namespace):
+        return _json_response(400, {"error": "Invalid namespace"})
+
+    # Look up userId from namespace
+    channel_key = namespace.replace("_", ":", 1)
+    user_id = ""
+    try:
+        resp = identity_table.get_item(
+            Key={"PK": f"CHANNEL#{channel_key}", "SK": "PROFILE"}
+        )
+        item = resp.get("Item")
+        if item:
+            user_id = item.get("userId", "")
+    except ClientError:
+        pass
+
+    # Try to get latest scan from USER# record first, fall back to SCAN#
+    pk = f"USER#{user_id}" if user_id else f"SCAN#{namespace}"
+    try:
+        resp = identity_table.get_item(
+            Key={"PK": pk, "SK": "SKILLSCAN#latest"}
+        )
+        item = resp.get("Item")
+        if item:
+            # Convert Decimal to int for JSON serialization
+            result = {k: (int(v) if hasattr(v, 'as_integer_ratio') else v) for k, v in item.items()}
+            return _json_response(200, result)
+    except ClientError as e:
+        logger.error("Failed to get scan result: %s", e)
+
+    return _json_response(404, {"error": "No scan results found"})
+
+
+@route("POST", "/api/skill-eval/{namespace}")
+def _handle_post_skill_eval(event):
+    """POST /api/skill-eval/{namespace} — trigger skill scan.
+
+    Body: {"action": "audit"} or {"action": "eval"}
+    """
+    namespace = event["pathParameters"]["namespace"]
+    if not _validate_namespace(namespace):
+        return _json_response(400, {"error": "Invalid namespace"})
+
+    if not SKILL_EVAL_FUNCTION_NAME:
+        return _json_response(503, {"error": "Skill eval Lambda not configured"})
+
+    body = event.get("parsedBody", {})
+    action = body.get("action", "audit")
+    if action not in ("audit", "eval"):
+        return _json_response(400, {"error": "action must be 'audit' or 'eval'"})
+
+    # Invoke skill-eval Lambda (synchronous for audit, could be async for eval)
+    invoke_type = "RequestResponse" if action == "audit" else "Event"
+    try:
+        resp = lambda_client.invoke(
+            FunctionName=SKILL_EVAL_FUNCTION_NAME,
+            InvocationType=invoke_type,
+            Payload=json.dumps({"action": action, "namespace": namespace}),
+        )
+
+        if invoke_type == "RequestResponse":
+            payload = json.loads(resp["Payload"].read().decode("utf-8"))
+            result = payload.get("body", payload)
+            return _json_response(200, result)
+        else:
+            # Async invocation — return immediately
+            return _json_response(202, {
+                "message": f"Eval started for {namespace}",
+                "action": action,
+            })
+    except ClientError as e:
+        logger.error("Failed to invoke skill-eval: %s", e)
+        return _json_response(500, {"error": "Failed to invoke skill eval"})
 
 
 def _match_route(method, path):
