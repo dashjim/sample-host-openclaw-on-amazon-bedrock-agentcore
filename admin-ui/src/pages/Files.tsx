@@ -473,34 +473,58 @@ export default function Files() {
                               {skill.warnings > 0 && <Tag color="orange">{skill.warnings} warning</Tag>}
                             </Space>
                           ),
-                          children: skill.findings && skill.findings.length > 0 ? (
-                            <Table
-                              size="small"
-                              pagination={false}
-                              dataSource={skill.findings}
-                              rowKey={(f) => `${f.code}-${f.file}-${f.line}`}
-                              columns={[
-                                {
-                                  title: 'Severity',
-                                  dataIndex: 'severity',
-                                  width: 90,
-                                  render: (s: string) => (
-                                    <Tag color={SEVERITY_COLORS[s] || 'default'}>{s}</Tag>
-                                  ),
-                                },
-                                { title: 'Code', dataIndex: 'code', width: 80 },
-                                { title: 'Message', dataIndex: 'message' },
-                                {
-                                  title: 'File',
-                                  dataIndex: 'file',
-                                  width: 150,
-                                  render: (f: string | null, r: SkillFinding) =>
-                                    f ? `${f}${r.line ? `:${r.line}` : ''}` : '-',
-                                },
-                              ]}
-                            />
-                          ) : (
-                            <Text type="secondary">No findings</Text>
+                          children: (
+                            <>
+                              {skill.reportKey && (
+                                <Button
+                                  size="small"
+                                  type="link"
+                                  icon={<EyeOutlined />}
+                                  style={{ marginBottom: 8, padding: 0 }}
+                                  onClick={async () => {
+                                    try {
+                                      const ns = selectedNs!.namespace;
+                                      const path = skill.reportKey!.slice(ns.length + 1);
+                                      const data = await get<{ presignedUrl?: string }>(
+                                        `/api/files/${ns}/${encodeURIComponent(path)}`
+                                      );
+                                      if (data.presignedUrl) window.open(data.presignedUrl, '_blank');
+                                    } catch { message.error('Failed to open report'); }
+                                  }}
+                                >
+                                  View Full HTML Report
+                                </Button>
+                              )}
+                              {skill.findings && skill.findings.length > 0 ? (
+                                <Table
+                                  size="small"
+                                  pagination={false}
+                                  dataSource={skill.findings}
+                                  rowKey={(f) => `${f.code}-${f.file}-${f.line}`}
+                                  columns={[
+                                    {
+                                      title: 'Severity',
+                                      dataIndex: 'severity',
+                                      width: 90,
+                                      render: (s: string) => (
+                                        <Tag color={SEVERITY_COLORS[s] || 'default'}>{s}</Tag>
+                                      ),
+                                    },
+                                    { title: 'Code', dataIndex: 'code', width: 80 },
+                                    { title: 'Message', dataIndex: 'message' },
+                                    {
+                                      title: 'File',
+                                      dataIndex: 'file',
+                                      width: 150,
+                                      render: (f: string | null, r: SkillFinding) =>
+                                        f ? `${f}${r.line ? `:${r.line}` : ''}` : '-',
+                                    },
+                                  ]}
+                                />
+                              ) : (
+                                <Text type="secondary">No findings</Text>
+                              )}
+                            </>
                           ),
                         }))}
                       />
