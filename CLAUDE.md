@@ -754,6 +754,16 @@ Only the **first channel identity** needs to be allowlisted. When a user binds a
 - **Namespace immutability**: System-determined from channel identity, cannot be changed by user request
 - **actorId vs namespace**: actorId uses colon format (`telegram:123456789`), namespace uses underscore format (`telegram_123456789`). Skill scripts (s3-user-files, eventbridge-cron) expect namespace format. The lightweight agent's `chat()` converts via `userId.replace(/:/g, "_")` before passing to tools. The proxy and workspace sync also use namespace format for S3 keys
 
+### Skill Eval Lambda
+- **Container image**: Python 3.12 + Node.js 22 + Claude CLI + `sample-agent-skill-eval` (bundled from source, no runtime git dependency)
+- **Claude CLI on Bedrock**: `CLAUDE_CODE_USE_BEDROCK=1` + model pinning env vars. Uses IAM role credentials (no Anthropic API key)
+- **Static audit** (`action: audit`): Pure Python static analysis — secrets, injection, unsafe patterns. Seconds to complete, synchronous
+- **AI eval** (`action: eval`): Functional + trigger evaluation via Claude CLI subprocess. Minutes to complete, async Lambda invoke
+- **Daily scan** (`action: scan-all`): EventBridge rule triggers scan of all user namespaces. Results stored in DynamoDB `SKILLSCAN#latest` + `SKILLSCAN#{timestamp}`
+- **S3 workflow**: Downloads `{namespace}/.openclaw/skills/` to `/tmp/`, runs `skill-eval audit` per skill directory, uploads HTML reports to `{namespace}/_skill-eval/`
+- **API Gateway catch-all**: Uses `/api/{proxy+}` instead of per-path routes to stay under Lambda resource-based policy 20KB limit (each route × method = one permission entry)
+- **DynamoDB records**: `PK=USER#{userId} SK=SKILLSCAN#latest` for latest result, `SK=SKILLSCAN#{timestamp}` for history
+
 ### Per-User Credential Isolation
 - **STS session-scoped credentials**: On init, the contract server calls `STS:AssumeRole` on the execution role with a minimal session policy that restricts S3 access to `{namespace}/*`. Other services (DynamoDB, Scheduler, SecretsManager) use `Resource: "*"` in the session policy — the execution role's own policy provides the actual resource-level restrictions. This design keeps the session policy under the **AWS 2048-byte packed limit** (long policies with per-resource Conditions easily exceed this)
 - **Session policy size limit**: AWS STS `AssumeRole` session policies have a 2048-byte packed limit. If exceeded, `AssumeRole` fails with "Packed policy consumes N% of allotted space". The current policy is ~668 bytes (well under limit). Adding Condition blocks (e.g., `dynamodb:LeadingKeys`, `s3:prefix`) quickly blows past the limit — avoid them in session policies
