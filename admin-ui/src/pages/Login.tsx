@@ -56,7 +56,7 @@ export default function Login() {
         justifyContent: 'center',
         alignItems: 'center',
         minHeight: '100vh',
-        background: '#f0f2f5',
+        background: 'inherit',
       }}
     >
       <Card style={{ width: 400 }}>

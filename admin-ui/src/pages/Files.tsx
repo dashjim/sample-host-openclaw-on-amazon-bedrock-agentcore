@@ -23,6 +23,7 @@ import {
   HomeOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import { theme as antTheme } from 'antd';
 import { get, del } from '../services/api';
 
 const { Title, Text } = Typography;
@@ -79,7 +80,8 @@ function getExtension(path: string): string {
 type RowEntry = { type: 'folder'; data: FolderEntry } | { type: 'file'; data: FileEntry };
 
 export default function Files() {
-  const [namespaces, setNamespaces] = useState<NamespaceEntry[]>([]);
+  const { token } = antTheme.useToken();
+  const [namespaces, setNamespaces] = useState<NamespaceEntry[]>([])
   const [nsLoading, setNsLoading] = useState(true);
   const [selectedNs, setSelectedNs] = useState<NamespaceEntry | null>(null);
 
@@ -272,24 +274,24 @@ export default function Files() {
     },
   ];
 
-  // User label for sidebar
+  // User label for sidebar — show display name or channel, with namespace as subtitle
   const getUserLabel = (entry: NamespaceEntry) => {
-    if (entry.displayName) return entry.displayName;
-    if (entry.channelKey) return entry.channelKey;
-    return entry.namespace;
+    const primary = entry.displayName || entry.channelKey || entry.namespace;
+    return primary;
   };
 
   return (
     <div>
       <Title level={4}>Files</Title>
 
-      <Layout style={{ background: 'transparent', minHeight: 500 }}>
+      <Layout style={{ background: token.colorBgContainer, borderRadius: token.borderRadiusLG, minHeight: 500 }}>
         <Sider
           width={260}
           style={{
-            background: 'transparent',
-            borderRight: '1px solid var(--border-color, #f0f0f0)',
+            background: token.colorBgContainer,
+            borderRight: `1px solid ${token.colorBorderSecondary}`,
             overflow: 'auto',
+            borderRadius: `${token.borderRadiusLG}px 0 0 ${token.borderRadiusLG}px`,
           }}
         >
           <div style={{ padding: '12px 16px', fontWeight: 500 }}>
@@ -318,14 +320,12 @@ export default function Files() {
                 key: entry.namespace,
                 icon: <UserOutlined />,
                 label: (
-                  <div>
-                    <div style={{ lineHeight: '20px' }}>{getUserLabel(entry)}</div>
-                    {entry.channelKey && entry.displayName && (
-                      <Tag style={{ fontSize: 10, marginTop: 2 }}>
-                        {entry.channelKey}
-                      </Tag>
-                    )}
-                  </div>
+                  <span
+                    title={entry.channelKey || entry.namespace}
+                    style={{ overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}
+                  >
+                    {getUserLabel(entry)}
+                  </span>
                 ),
               }))}
             />

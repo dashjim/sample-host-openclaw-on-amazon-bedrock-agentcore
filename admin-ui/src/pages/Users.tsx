@@ -398,7 +398,7 @@ export default function Users() {
                     justifyContent: 'space-between',
                     alignItems: 'center',
                     padding: '8px 0',
-                    borderBottom: '1px solid #f0f0f0',
+                    borderBottom: '1px solid rgba(128,128,128,0.2)',
                   }}
                 >
                   <Tag color={CHANNEL_COLORS[ch.channel] || 'default'}>
