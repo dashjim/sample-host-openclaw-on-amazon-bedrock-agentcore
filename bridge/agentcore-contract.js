@@ -135,7 +135,8 @@ function setupSessionStorageSymlink() {
     const mountedDir = `${SESSION_STORAGE_MOUNT}/.openclaw`;
     fs.mkdirSync(mountedDir, { recursive: true });
 
-    // Remove existing .openclaw if it's a real directory (not already a symlink)
+    // Check existing .openclaw — may be a symlink, directory, or missing
+    let existingType = null;
     try {
       const stat = fs.lstatSync(OPENCLAW_DIR);
       if (stat.isSymbolicLink()) {
@@ -144,25 +145,24 @@ function setupSessionStorageSymlink() {
           console.log("[contract] Session storage symlink already in place");
           return true;
         }
+        existingType = "symlink";
         fs.unlinkSync(OPENCLAW_DIR);
       } else if (stat.isDirectory()) {
-        // Move existing contents to session storage before symlinking
-        const entries = fs.readdirSync(OPENCLAW_DIR);
-        for (const entry of entries) {
-          const src = `${OPENCLAW_DIR}/${entry}`;
-          const dst = `${mountedDir}/${entry}`;
-          if (!fs.existsSync(dst)) {
-            fs.renameSync(src, dst);
-          }
-        }
-        fs.rmSync(OPENCLAW_DIR, { recursive: true });
+        existingType = "directory";
+        // Copy contents to session storage (cross-device, can't use rename)
+        const { execSync } = require("child_process");
+        execSync(`cp -a ${OPENCLAW_DIR}/. ${mountedDir}/ 2>/dev/null || true`);
+        fs.rmSync(OPENCLAW_DIR, { recursive: true, force: true });
+      } else {
+        existingType = "file";
+        fs.unlinkSync(OPENCLAW_DIR);
       }
     } catch {
       // OPENCLAW_DIR doesn't exist yet — that's fine
     }
 
     fs.symlinkSync(mountedDir, OPENCLAW_DIR);
-    console.log(`[contract] Session storage symlink: ${OPENCLAW_DIR} -> ${mountedDir}`);
+    console.log(`[contract] Session storage symlink: ${OPENCLAW_DIR} -> ${mountedDir} (was: ${existingType || "missing"})`);
     return true;
   } catch (err) {
     console.warn(`[contract] Session storage setup failed: ${err.message}`);
