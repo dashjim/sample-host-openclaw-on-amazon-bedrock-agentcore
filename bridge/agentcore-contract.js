@@ -1049,8 +1049,6 @@ async function init(userId, actorId, channel) {
           console.warn(`[contract] Workspace restore failed: ${err.message}`);
         });
       }
-      // Lower backup frequency when session storage handles primary persistence
-      workspaceSync.setBackupMode(true);
     } else {
       // No session storage — use S3 sync as primary (existing behavior)
       workspaceSync.restoreWorkspace(namespace).catch((err) => {
