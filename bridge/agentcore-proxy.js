@@ -9,6 +9,7 @@
 const http = require("http");
 const crypto = require("crypto");
 const fs = require("fs");
+const tokenTracker = require("./token-tracker");
 
 const PORT = 18790;
 const AWS_REGION = process.env.AWS_REGION;
@@ -1340,7 +1341,7 @@ async function invokeBedrockStreaming(
         `[proxy] Stream complete: ${inputTokens}in/${outputTokens}out tokens` +
           (toolCalls.length > 0 ? `, ${toolCalls.length} tool call(s)` : ""),
       );
-      return fullResponseText;
+      return { text: fullResponseText, inputTokens, outputTokens };
     } catch (err) {
       lastError = err;
       console.error(
@@ -1365,7 +1366,7 @@ async function invokeBedrockStreaming(
   } else {
     res.end();
   }
-  return "";
+  return { text: "", inputTokens: 0, outputTokens: 0 };
 }
 
 /**
@@ -1434,6 +1435,7 @@ const server = http.createServer(async (req, res) => {
         subagent_requests: subagentRequestCount,
         installed_skills: installedSkills,
         s3_skill_exists: s3SkillExists,
+        token_stats: tokenTracker.getStats(),
       }),
     );
     return;
@@ -1584,12 +1586,17 @@ const server = http.createServer(async (req, res) => {
 
         // --- Direct Bedrock path ---
         if (stream) {
-          await invokeBedrockStreaming(
+          const streamResult = await invokeBedrockStreaming(
             processedMessages,
             res,
             parsed.model,
             systemTextOverride,
             toolConfig,
+          );
+          tokenTracker.record(
+            actorId, channel, resolveModelId(parsed.model),
+            streamResult.inputTokens, streamResult.outputTokens,
+            isSubagent,
           );
         } else {
           const result = await invokeBedrock(
@@ -1601,6 +1608,11 @@ const server = http.createServer(async (req, res) => {
           const response = formatChatResponse(result, parsed.model);
           console.log(
             `[proxy] Response: ${result.usage.inputTokens || "?"}in/${result.usage.outputTokens || "?"}out tokens`,
+          );
+          tokenTracker.record(
+            actorId, channel, resolveModelId(parsed.model),
+            result.usage.inputTokens || 0, result.usage.outputTokens || 0,
+            isSubagent,
           );
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(response));
@@ -1652,4 +1664,6 @@ server.listen(PORT, "127.0.0.1", () => {
   console.log(
     `[proxy] Cognito identity: ${COGNITO_USER_POOL_ID ? `pool=${COGNITO_USER_POOL_ID} client=${COGNITO_CLIENT_ID}` : "disabled"}`,
   );
+  // Start per-user token tracking CloudWatch publisher (60s interval)
+  tokenTracker.startPublisher();
 });
