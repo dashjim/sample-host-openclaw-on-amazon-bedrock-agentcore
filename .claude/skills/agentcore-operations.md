@@ -6,6 +6,10 @@ user-invocable: true
 
 # OpenClaw on AgentCore — Operations Guide
 
+> **Freshness (Apr 2026):** Core deployment/debugging procedures are current. This skill does not
+> cover: Admin Control Plane (see `admin_stack.py`), Token Monitoring (see `token_monitoring_stack.py`),
+> DingTalk channel (draft only). For design context and feature development, use the `openclaw-design` skill.
+
 ## Hybrid Deployment Architecture
 
 CDK manages infrastructure. AgentCore Starter Toolkit manages the container runtime.

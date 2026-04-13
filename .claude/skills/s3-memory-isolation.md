@@ -1,10 +1,14 @@
 ---
 name: s3-memory-isolation
-description: "Pattern for adding new per-user S3-backed memory types to OpenClaw (identity, preferences, tasks, etc.)"
+description: "Pattern for adding new per-user S3-backed memory types to OpenClaw (identity, preferences, tasks, etc.). For the full 3-layer isolation deep-dive, see docs/per-user-s3-isolation.md (35KB, Apr 2026)."
 user-invocable: true
 ---
 
 # S3 Per-User Memory Isolation Pattern
+
+> **Note (Apr 2026):** This skill covers the basic pattern for adding pre-loaded workspace files.
+> For comprehensive S3 isolation architecture (STS session policies, scoped credentials, security analysis),
+> see `docs/per-user-s3-isolation.md` (35KB). For design context, use the `openclaw-design` skill.
 
 Use this pattern when adding a new type of persistent per-user data to OpenClaw. The workspace pre-loading system already handles 5 bootstrap files; this pattern covers adding additional file types.
 

@@ -6,6 +6,10 @@ user-invocable: true
 
 # E2E Bot Testing
 
+> **Freshness (Apr 2026):** Core E2E test procedures and classes are current. Does not yet cover:
+> Admin UI E2E tests, token tracking metric verification, DingTalk webhook tests.
+> For design context when adding new test areas, use the `openclaw-design` skill.
+
 Automated end-to-end testing for the deployed OpenClaw bot. Simulates Telegram webhook POSTs to the API Gateway and verifies the full message lifecycle via CloudWatch log tailing. Includes phase timing measurement and full OpenClaw startup verification.
 
 ## Prerequisites
