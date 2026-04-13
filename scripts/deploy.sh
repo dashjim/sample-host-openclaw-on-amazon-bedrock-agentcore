@@ -181,6 +181,7 @@ read_cdk_outputs() {
     --output text)
 
   COGNITO_PASSWORD_SECRET_ID="openclaw/cognito-password-secret"
+  TELEGRAM_CHANNEL_SECRET_ID="openclaw/channels/telegram"
 
   CMK_ARN=$(aws cloudformation describe-stacks \
     --stack-name OpenClawSecurity --region "$REGION" \
@@ -247,7 +248,8 @@ phase2_toolkit() {
   # Dockerfile COPY commands expect paths relative to bridge/. Patch it back.
   local yaml_file="$PROJECT_DIR/.bedrock_agentcore.yaml"
   if grep -q "source_path:.*$PROJECT_DIR$" "$yaml_file" 2>/dev/null; then
-    sed -i "s|source_path: $PROJECT_DIR$|source_path: $PROJECT_DIR/bridge|" "$yaml_file"
+    local tmp_file="${yaml_file}.tmp"
+    sed "s|source_path: $PROJECT_DIR$|source_path: $PROJECT_DIR/bridge|" "$yaml_file" > "$tmp_file" && mv "$tmp_file" "$yaml_file"
     echo "  (patched source_path -> bridge/)"
   fi
 
@@ -287,7 +289,57 @@ phase2_toolkit() {
     --env "EVENTBRIDGE_ROLE_ARN=arn:aws:iam::${ACCOUNT}:role/openclaw-cron-scheduler-role-${REGION}" \
     --env "IDENTITY_TABLE_NAME=openclaw-identity" \
     --env "CRON_LEAD_TIME_MINUTES=$CRON_LEAD_TIME" \
-    --env "SUBAGENT_BEDROCK_MODEL_ID=$SUBAGENT_MODEL_ID"
+    --env "SUBAGENT_BEDROCK_MODEL_ID=$SUBAGENT_MODEL_ID" \
+    --env "TELEGRAM_CHANNEL_SECRET_ID=$TELEGRAM_CHANNEL_SECRET_ID"
+
+  # --- Configure session storage (not supported by agentcore CLI yet) ---
+  echo "--- Configuring session storage ---"
+  # Read runtime ID early for the update-agent-runtime call
+  local _early_runtime_id
+  _early_runtime_id=$(python3 -c "
+import re
+with open('$PROJECT_DIR/.bedrock_agentcore.yaml') as f:
+    text = f.read()
+m = re.search(r'agent_id:\s*(\S+)', text)
+print(m.group(1) if m else '')
+" 2>/dev/null || echo "")
+
+  if [ -n "$_early_runtime_id" ]; then
+    python3 -c "
+import boto3, json, sys
+
+client = boto3.client('bedrock-agentcore-control', region_name='$REGION')
+
+# Get current runtime config to preserve all fields
+rt = client.get_agent_runtime(agentRuntimeId='$_early_runtime_id')
+
+# Check if session storage is already configured
+existing_fs = rt.get('filesystemConfigurations', [])
+has_session_storage = any(
+    'sessionStorage' in fs for fs in existing_fs
+)
+
+if has_session_storage:
+    print('  Session storage already configured — skipping.')
+    sys.exit(0)
+
+# Add session storage config (full replace — must include all fields)
+print('  Adding filesystemConfigurations to runtime...')
+client.update_agent_runtime(
+    agentRuntimeId='$_early_runtime_id',
+    agentRuntimeArtifact=rt['agentRuntimeArtifact'],
+    roleArn=rt['roleArn'],
+    networkConfiguration=rt['networkConfiguration'],
+    environmentVariables=rt.get('environmentVariables', {}),
+    filesystemConfigurations=[
+        {'sessionStorage': {'mountPath': '/mnt/workspace'}}
+    ],
+)
+print('  Session storage configured: /mnt/workspace')
+" 2>&1 || echo "  WARNING: Failed to configure session storage (non-fatal)."
+  else
+    echo "  WARNING: Could not determine runtime ID — skipping session storage config."
+  fi
 
   # Read runtime ID and endpoint ID from toolkit
   echo "--- Reading runtime info ---"
