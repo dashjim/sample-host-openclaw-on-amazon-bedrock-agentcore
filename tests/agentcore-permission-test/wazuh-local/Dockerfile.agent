@@ -1,0 +1,46 @@
+FROM python:3.11-slim
+
+# ============================================================
+# Phase 1: Install Wazuh Agent as root
+# ============================================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gnupg \
+    procps \
+    iproute2 \
+    lsb-release \
+    && curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | gpg --dearmor -o /usr/share/keyrings/wazuh.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" > /etc/apt/sources.list.d/wazuh.list \
+    && apt-get update \
+    && WAZUH_MANAGER=placeholder apt-get install -y wazuh-agent \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# ============================================================
+# Phase 2: Configure Wazuh Agent
+# ============================================================
+COPY ossec.conf.template /var/ossec/etc/ossec.conf.template
+
+# ============================================================
+# Phase 3: Set up non-root user for AI app
+# ============================================================
+RUN useradd -m -s /bin/bash agentuser
+
+# Dummy AI app
+RUN mkdir -p /app && chown agentuser:agentuser /app
+COPY --chown=agentuser:agentuser ai_app.py /app/ai_app.py
+
+# ============================================================
+# Phase 4: Lock down Wazuh — keep internal perms, block agentuser
+# ============================================================
+# Wazuh installs with its own root:wazuh ownership and correct internal perms.
+# We only need to ensure the top-level /var/ossec is not accessible to "other" users.
+# Wazuh's own processes (running as root or wazuh group) retain full access.
+RUN chmod 750 /var/ossec
+
+# ============================================================
+# Entrypoint: root starts Wazuh, then drops to non-root
+# ============================================================
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

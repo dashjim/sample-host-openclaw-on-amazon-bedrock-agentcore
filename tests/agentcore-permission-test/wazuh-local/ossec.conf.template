@@ -1,0 +1,53 @@
+<ossec_config>
+  <client>
+    <server>
+      <address>WAZUH_MANAGER_IP</address>
+      <port>1514</port>
+      <protocol>tcp</protocol>
+    </server>
+    <enrollment>
+      <enabled>yes</enabled>
+      <manager_address>WAZUH_MANAGER_IP</manager_address>
+      <agent_name>WAZUH_AGENT_NAME</agent_name>
+    </enrollment>
+  </client>
+
+  <!-- File Integrity Monitoring -->
+  <syscheck>
+    <disabled>no</disabled>
+    <frequency>60</frequency>
+    <scan_on_start>yes</scan_on_start>
+    <!-- Monitor AI app directory -->
+    <directories check_all="yes" realtime="yes" report_changes="yes">/app</directories>
+    <!-- Monitor system critical paths -->
+    <directories check_all="yes">/etc</directories>
+    <directories check_all="yes">/usr/bin</directories>
+    <directories check_all="yes">/tmp</directories>
+  </syscheck>
+
+  <!-- Rootkit detection -->
+  <rootcheck>
+    <disabled>no</disabled>
+    <frequency>120</frequency>
+  </rootcheck>
+
+  <!-- Log collection -->
+  <localfile>
+    <log_format>syslog</log_format>
+    <location>/var/log/syslog</location>
+  </localfile>
+
+  <localfile>
+    <log_format>syslog</log_format>
+    <location>/app/app.log</location>
+  </localfile>
+
+  <!-- Active response (optional) -->
+  <active-response>
+    <disabled>no</disabled>
+  </active-response>
+
+  <logging>
+    <log_format>json</log_format>
+  </logging>
+</ossec_config>

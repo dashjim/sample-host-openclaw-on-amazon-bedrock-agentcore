@@ -1,0 +1,30 @@
+FROM public.ecr.aws/docker/library/python:3.11-slim
+
+WORKDIR /app
+
+# Install Wazuh Agent + system tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gnupg \
+    procps \
+    iproute2 \
+    lsb-release \
+    && curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | gpg --dearmor -o /usr/share/keyrings/wazuh.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" > /etc/apt/sources.list.d/wazuh.list \
+    && apt-get update \
+    && WAZUH_MANAGER=placeholder apt-get install -y wazuh-agent \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install Python deps
+COPY requirements.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY wazuh_runtime_agent.py .
+
+# No USER directive — runs as root so Wazuh can start properly
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:8080/ping || exit 1
+
+CMD ["python", "-m", "wazuh_runtime_agent"]
