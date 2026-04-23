@@ -228,23 +228,93 @@ self.web_user_pool_client = self.web_user_pool.add_client(
 
 #### 2. AgentCore Runtime OAuth 授权器（新增配置）
 
-配置 AgentCore Runtime Endpoint 接受 Web Cognito User Pool 的 JWT：
+AgentCore Runtime 支持 `customJWTAuthorizer` — 可指向任何符合 OIDC 标准的 OAuth Server。配置 `discoveryUrl`（`.well-known/openid-configuration`），平台自动获取 JWKS 公钥验证 JWT。
 
-```python
-# 通过 AWS SDK（Starter Toolkit 尚未暴露此功能）
-client.update_agent_runtime_endpoint(
-    agentRuntimeEndpointId=endpoint_id,
-    authorizerType="CUSTOM_JWT",
-    authorizerConfiguration={
-        "customJwtAuthorizer": {
-            "discoveryUrl": f"https://cognito-idp.{region}.amazonaws.com/{web_user_pool_id}",
-            "allowedAudience": [web_user_pool_client_id],
-        }
-    },
-)
+**⚠️ 重要限制**：一个 Runtime **只能选 SigV4 或 JWT Bearer 其中一种**，不能同时用。当前项目的推荐方案见下方"两种认证模式共存"。
+
+**配置方式（`update-agent-runtime`）**：
+
+```bash
+# ⚠️ update-agent-runtime 是 FULL REPLACE — 必须带上所有现有参数
+aws bedrock-agentcore-control update-agent-runtime \
+  --agent-runtime-id <RUNTIME_ID> \
+  --authorizer-configuration '{
+    "customJWTAuthorizer": {
+      "discoveryUrl": "<DISCOVERY_URL>",
+      "allowedAudience": ["<CLIENT_ID>"]
+    }
+  }' \
+  --agent-runtime-artifact '{"containerConfiguration":{"containerUri":"<ECR_URI>"}}' \
+  --role-arn "<ROLE_ARN>" \
+  --network-configuration '...' \
+  --environment-variables '...' \
+  --region us-west-2
 ```
 
-这使浏览器可以直接使用 Cognito JWT 连接 AgentCore WebSocket — HTTP 引导阶段通过 API Lambda（IAM 签名），WebSocket 直连阶段通过 OAuth Bearer。
+**各 IdP 的 discoveryUrl 格式**：
+
+| IdP | discoveryUrl |
+|---|---|
+| **AWS Cognito** | `https://cognito-idp.{region}.amazonaws.com/{pool_id}/.well-known/openid-configuration` |
+| **Okta** | `https://{your-domain}.okta.com/.well-known/openid-configuration` |
+| **Auth0** | `https://{your-domain}.auth0.com/.well-known/openid-configuration` |
+| **Azure AD** | `https://login.microsoftonline.com/{tenant_id}/v2.0/.well-known/openid-configuration` |
+| **Keycloak** | `https://{host}/realms/{realm}/.well-known/openid-configuration` |
+
+**`allowedAudience` vs `allowedClients`**：
+
+| 参数 | 校验的 JWT claim | 何时用 |
+|---|---|---|
+| `allowedAudience` | `aud` | **Cognito ID Token**（推荐）、大多数 IdP |
+| `allowedClients` | `client_id` | Cognito Access Token、需要校验客户端身份时 |
+
+> **Cognito 陷阱**：ID Token 有 `aud` 没有 `client_id`；Access Token 有 `client_id` 没有 `aud`。推荐用 ID Token + `allowedAudience`。如果同时配了两者，平台会同时校验两个 claim。
+
+**Token 验证流程**：
+
+```
+浏览器 → JWT (from Okta/Auth0/Cognito/Azure AD)
+  ↓ Authorization: Bearer <token>  (HTTP 调用)
+  ↓ Sec-WebSocket-Protocol: base64UrlBearerAuthorization.<base64url(token)>  (WebSocket)
+AgentCore 平台
+  ↓ 1. 从 discoveryUrl 获取 JWKS 公钥
+  ↓ 2. 验证 JWT 签名
+  ↓ 3. 检查 iss / exp / aud / client_id / scope
+  ↓ 4. 通过 → 转发到容器
+容器 (OpenClaw Gateway)
+```
+
+**两种认证模式共存（推荐方案）**：
+
+当前项目的 Router Lambda、Cron Lambda 使用 **IAM SigV4** 调用 `invoke_agent_runtime` — 切换到 JWT 会破坏这些组件。推荐方案：
+
+```
+方案 A（推荐）：保持 SigV4 + Pre-signed URL
+═══════════════════════════════════════════
+  Router/Cron Lambda → IAM SigV4 → invoke_agent_runtime (HTTP)    ← 不变
+  Web API Lambda     → IAM SigV4 → invoke_agent_runtime (warmup)  ← 不变
+  Web API Lambda     → 生成 SigV4 Pre-signed URL → 返回给浏览器
+  浏览器             → Pre-signed URL → WSS 连接                   ← 无需 JWT 配置
+  优点：零 Runtime 配置变更，现有通道不受影响
+  缺点：Pre-signed URL 有过期时间（默认 5 分钟），需刷新机制
+
+方案 B：切换到 JWT + 配置 customJWTAuthorizer
+═══════════════════════════════════════════════
+  需要修改 Router/Cron Lambda 改用 JWT 认证
+  或创建第二个 Runtime（一个 SigV4 给 Lambda，一个 JWT 给浏览器）
+  优点：浏览器直接用 JWT 连接，无需 Pre-signed URL
+  缺点：需要额外 Runtime 或重构现有 Lambda
+
+方案 C：直接对接第三方 IdP（无 Cognito 中间层）
+═══════════════════════════════════════════════════
+  customJWTAuthorizer.discoveryUrl 直指企业 IdP
+  如 Okta: "https://company.okta.com/.well-known/openid-configuration"
+  浏览器直接用企业 IdP 的 JWT 连接 AgentCore WebSocket
+  优点：最简架构，无 Cognito
+  缺点：失去 Cognito 的多 IdP 聚合能力；Lambda 也需要改用 JWT
+```
+
+**POC 验证（2026-04-23）使用的是方案 A** — SigV4 Pre-signed URL，已端到端验证通过。
 
 #### 3. Web API Lambda（新建，基于现有 Router Lambda 的薄层封装）
 
@@ -614,10 +684,14 @@ OpenClaw Gateway 自身的 `maxPayload` 是 25MB（`hello-ok.policy`），所以
 
 ### Q4: 企业 IdP 如何对接？改动在哪里？
 
-仅 CDK 配置变更，零容器代码改动：
+有两条路径，取决于是否使用 Cognito 作为中间层：
+
+**路径 1：Cognito + IdP 联邦（推荐 — 多 IdP 聚合）**
+
+CDK 配置变更，零容器代码改动：
 
 ```python
-# stacks/security_stack.py
+# stacks/security_stack.py — Okta 示例
 okta_provider = cognito.UserPoolIdentityProviderOidc(
     self, "OktaProvider",
     user_pool=self.web_user_pool,
@@ -633,11 +707,37 @@ okta_provider = cognito.UserPoolIdentityProviderOidc(
 ```
 
 支持的 IdP 类型：
-- **SAML 2.0**：ADFS、Azure AD、OneLogin
 - **OIDC**：Okta、Auth0、Google Workspace、Keycloak
+- **SAML 2.0**：ADFS、Azure AD、OneLogin
 - **社交登录**：Google、Facebook、Apple、Amazon（Cognito 内置）
 
-用户登录流程：浏览器 → Cognito Hosted UI → 跳转企业 IdP → 认证 → 回调 → JWT token → 一切如常。
+用户登录流程：浏览器 → Cognito Hosted UI → 跳转企业 IdP → 认证 → 回调 → Cognito JWT → Web API Lambda → AgentCore
+
+**路径 2：直接对接企业 IdP（无 Cognito 中间层）**
+
+将 `customJWTAuthorizer` 的 `discoveryUrl` 直接指向企业 IdP：
+
+```bash
+aws bedrock-agentcore-control update-agent-runtime \
+  --agent-runtime-id <RUNTIME_ID> \
+  --authorizer-configuration '{
+    "customJWTAuthorizer": {
+      "discoveryUrl": "https://your-company.okta.com/.well-known/openid-configuration",
+      "allowedAudience": ["your-okta-client-id"]
+    }
+  }' \
+  ... # FULL REPLACE — 必须包含所有现有参数
+```
+
+各 IdP 的 discoveryUrl：
+- **Okta**：`https://{domain}.okta.com/.well-known/openid-configuration`
+- **Auth0**：`https://{domain}.auth0.com/.well-known/openid-configuration`
+- **Azure AD**：`https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration`
+- **Keycloak**：`https://{host}/realms/{realm}/.well-known/openid-configuration`
+
+浏览器直接用企业 IdP 的 JWT 连接 AgentCore WebSocket — 架构最简，但失去 Cognito 的多 IdP 聚合能力。
+
+**注意**：路径 2 会将 Runtime auth 从 SigV4 切换为 JWT — Router/Cron Lambda 也需要相应修改。如果不想影响现有通道，使用方案 A（Pre-signed URL）避免切换。
 
 ### Q5: 新用户如何注册？需要管理员操作吗？
 
@@ -734,12 +834,29 @@ HTTP 引导解决了这个问题：
 
 ### Q12: 企业 IdP 对接需要改动容器代码吗？
 
-**完全不需要。** IdP 变更仅影响 Cognito 配置（CDK 层面）：
+**完全不需要。** 无论使用哪种 IdP 对接方式，容器代码都不受影响：
 
 ```
-用户 → Cognito Hosted UI → 企业 IdP（Okta/Azure AD/ADFS）→ 认证
-  → 回调 Cognito → JWT（标准格式，sub 来自 IdP 映射）
-  → API Lambda 消费 JWT → invoke_agent_runtime → 容器
+方式 1：Cognito + IdP 联邦
+  用户 → Cognito Hosted UI → 企业 IdP → 认证 → Cognito JWT → API Lambda → 容器
+
+方式 2：直接对接 IdP（customJWTAuthorizer）
+  用户 → 企业 IdP 登录 → IdP JWT → AgentCore 平台验证 → 容器
+
+方式 3：SigV4 Pre-signed URL（POC 验证方案）
+  用户 → Cognito/IdP 登录 → API Lambda 生成 Pre-signed URL → 浏览器 WSS 连接 → 容器
 ```
 
-容器收到的始终是 `{action:"warmup", userId:"user_abc", actorId:"web:xxx"}` — 不关心 JWT 是 Cognito 原生认证还是 IdP 联邦产生的。三个 Cognito Pool（内部、Admin、Web）完全独立运作，互不干扰。
+容器收到的始终是 `{action:"warmup", userId:"user_abc", actorId:"web:xxx"}`（HTTP 引导）或原始 WebSocket 帧（Gateway Protocol）— 不关心 JWT 由谁签发。
+
+**IdP 选择不影响的层**：per-user 隔离、scoped credentials、DynamoDB 身份、S3 命名空间、OpenClaw Gateway Protocol — 全部在 JWT 验证之后的层。
+
+### Q13: AgentCore Runtime 能同时支持 SigV4 和 JWT 吗？
+
+**不能。** 一个 Runtime 只能选一种入站认证方式。这是当前项目选择**方案 A（Pre-signed URL）**的关键原因：
+
+- Router Lambda / Cron Lambda 依赖 IAM SigV4 调用 `invoke_agent_runtime`
+- 如果切换到 JWT，这些组件全部需要重构
+- Pre-signed URL 在 Lambda 端用 SigV4 生成，在浏览器端是普通 URL — 两全其美
+
+如果未来需要 JWT 直连，可以创建第二个 Runtime（独立容器），专门服务 Web UI 的 JWT 流量。
