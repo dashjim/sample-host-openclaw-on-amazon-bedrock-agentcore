@@ -3,12 +3,11 @@
 WebSocket bridge POC test — verifies browser can reach OpenClaw Gateway Protocol
 via AgentCore platform auto-bridge.
 
-AgentCore platform auto-discovers the container's OpenClaw Gateway (port 18789)
-and bridges WSS connections directly. No /ws handler on 8080 needed.
-
 Usage:
-    source ~/ws-poc-env.sh   # optional — sets env vars
-    python3 test_ws_bridge.py
+    source ~/ws-poc-env.sh
+    python3 test_ws_bridge.py                        # default test message
+    python3 test_ws_bridge.py "你能干什么？"          # custom message
+    python3 test_ws_bridge.py --interactive           # interactive chat mode
 
 Requires: bedrock-agentcore SDK, websockets, boto3
 """
@@ -19,6 +18,7 @@ import os
 import sys
 import time
 
+import boto3
 import websockets
 
 RUNTIME_ARN = os.environ.get(
@@ -28,6 +28,9 @@ RUNTIME_ARN = os.environ.get(
 SESSION_ID = os.environ.get(
     "SESSION_ID", "ses_user_c1874612116a454b_69185b4354bc"
 )
+ACTOR_ID = os.environ.get("ACTOR_ID", "feishu:ou_75f0be3af5be36553d6ab69fc561a12a")
+USER_ID = os.environ.get("USER_ID", "user_c1874612116a454b")
+CHANNEL = os.environ.get("CHANNEL", "feishu")
 REGION = os.environ.get("AWS_REGION", "us-west-2")
 GATEWAY_TOKEN = os.environ.get("GATEWAY_TOKEN", "")
 
@@ -41,153 +44,153 @@ def next_id():
 
 
 def decode_msg(raw):
-    """Decode WebSocket message (may be binary or text)."""
     if isinstance(raw, bytes):
         return raw.decode("utf-8", errors="replace")
     return raw
 
 
-async def test_ws_bridge():
-    # 1. Generate signed WebSocket URL
-    print("[1] Generating signed WebSocket URL...")
-    print(f"    Runtime: {RUNTIME_ARN}")
-    print(f"    Session: {SESSION_ID}")
+def read_response(resp):
+    """Read boto3 response body — handles both StreamingBody and str."""
+    raw = resp.get("response", "{}")
+    if hasattr(raw, "read"):
+        return raw.read().decode()
+    return str(raw)
 
-    from bedrock_agentcore.runtime import AgentCoreRuntimeClient
 
-    client = AgentCoreRuntimeClient(region=REGION)
-    presigned_url = client.generate_presigned_url(
-        runtime_arn=RUNTIME_ARN,
-        session_id=SESSION_ID,
-        expires=300,
+def invoke_runtime(agentcore, action_payload):
+    """invoke_agent_runtime — boto3 SDK takes raw JSON, NOT base64."""
+    resp = agentcore.invoke_agent_runtime(
+        agentRuntimeArn=RUNTIME_ARN,
+        runtimeSessionId=SESSION_ID,
+        runtimeUserId=ACTOR_ID,
+        payload=json.dumps(action_payload),
+        contentType="application/json",
+        accept="application/json",
     )
-    print(f"    URL: {presigned_url[:100]}...")
+    return json.loads(read_response(resp))
 
-    # 2. Connect via WebSocket
-    print(f"\n[2] Connecting WebSocket...")
-    try:
-        ws = await websockets.connect(presigned_url, open_timeout=30)
-    except Exception as e:
-        print(f"    FAILED: {e}")
-        return False
-    print(f"    Connected!")
 
-    # 3. Fetch gateway token (for OpenClaw connect handshake)
-    if not GATEWAY_TOKEN:
-        print(f"\n[3] Fetching gateway token from Secrets Manager...")
-        import boto3
+def warmup_session():
+    """HTTP bootstrap — ensures container is alive before WebSocket connect."""
+    print("[0] HTTP bootstrap — warming up container...")
 
-        sm = boto3.client("secretsmanager", region_name=REGION)
-        resp = sm.get_secret_value(SecretId="openclaw/gateway-token")
-        token = resp["SecretString"]
-        print(f"    Token fetched ({len(token)} chars)")
-    else:
-        token = GATEWAY_TOKEN
-        print(f"\n[3] Using provided gateway token")
+    agentcore = boto3.client("bedrock-agentcore", region_name=REGION)
 
-    # 4. Send Gateway Protocol connect request immediately
-    # AgentCore platform auto-bridges to container port 18789 (OpenClaw Gateway).
-    # No connect.challenge is sent — send connect request directly.
+    # Send warmup — auto-creates new container if session expired
+    result = invoke_runtime(agentcore, {
+        "action": "warmup",
+        "userId": USER_ID,
+        "actorId": ACTOR_ID,
+        "channel": CHANNEL,
+    })
+    print(f"    Warmup raw: {json.dumps(result)[:200]}")
+    status = result.get("status", "")
+    if status == "ready":
+        print("    Container already ready!")
+        return True
+
+    # Poll for openclawReady via status action
+    # Container may return "internal error" during init — that's normal, keep polling
+    print("    Waiting for OpenClaw...", end="", flush=True)
+    t0 = time.time()
+    for i in range(30):  # 30 * 2s = 60s max
+        time.sleep(2)
+        try:
+            result = invoke_runtime(agentcore, {"action": "status"})
+            # status action returns {"response": "{\"openclawReady\":true,...}"}
+            inner = result.get("response", "")
+            if isinstance(inner, str) and inner.startswith("{"):
+                data = json.loads(inner)
+                if data.get("openclawReady"):
+                    elapsed = int(time.time() - t0)
+                    print(f" ready! ({elapsed}s)")
+                    return True
+                print(".", end="", flush=True)
+            elif result.get("status") == "ready":
+                elapsed = int(time.time() - t0)
+                print(f" ready! ({elapsed}s)")
+                return True
+            else:
+                print(".", end="", flush=True)
+        except Exception:
+            print(".", end="", flush=True)
+
+    print(" timeout!")
+    return False
+
+
+def get_gateway_token():
+    """Fetch OpenClaw gateway token from Secrets Manager."""
+    global GATEWAY_TOKEN
+    if GATEWAY_TOKEN:
+        return GATEWAY_TOKEN
+    sm = boto3.client("secretsmanager", region_name=REGION)
+    GATEWAY_TOKEN = sm.get_secret_value(SecretId="openclaw/gateway-token")["SecretString"]
+    return GATEWAY_TOKEN
+
+
+async def gateway_connect(ws):
+    """Send Gateway Protocol connect and wait for hello-ok."""
+    token = get_gateway_token()
     connect_id = next_id()
-    connect_req = {
+    await ws.send(json.dumps({
         "type": "req",
         "id": connect_id,
         "method": "connect",
         "params": {
-            "minProtocol": 3,
-            "maxProtocol": 3,
-            "client": {
-                "id": "openclaw-control-ui",
-                "version": "1.0.0",
-                "platform": "linux",
-                "mode": "backend",
-            },
+            "minProtocol": 3, "maxProtocol": 3,
+            "client": {"id": "openclaw-control-ui", "version": "1.0.0",
+                       "platform": "linux", "mode": "backend"},
             "role": "operator",
             "scopes": ["operator.admin", "operator.read", "operator.write"],
-            "caps": [],
-            "commands": [],
-            "permissions": {},
+            "caps": [], "commands": [], "permissions": {},
             "auth": {"token": token},
-            "locale": "en-US",
-            "userAgent": "openclaw-ws-poc/1.0",
+            "locale": "en-US", "userAgent": "openclaw-ws-poc/1.0",
         },
-    }
-    print(f"\n[4] Sending Gateway connect request...")
-    await ws.send(json.dumps(connect_req))
+    }))
 
-    # 5. Wait for hello-ok response
-    print(f"\n[5] Waiting for hello-ok response...")
-    hello_ok = False
-    try:
-        msg = await asyncio.wait_for(ws.recv(), timeout=15)
-        data = json.loads(decode_msg(msg))
-        if data.get("type") == "res" and data.get("ok"):
-            payload = data.get("payload", {})
-            proto = payload.get("protocol", "?")
-            methods_count = len(payload.get("features", {}).get("methods", []))
-            events_count = len(payload.get("features", {}).get("events", []))
-            print(f"    OK — hello-ok received!")
-            print(f"    Protocol: v{proto}")
-            print(f"    Methods: {methods_count}, Events: {events_count}")
-            print(f"    Server: {json.dumps(payload.get('server', {}))}")
-            hello_ok = True
-        elif data.get("type") == "res" and not data.get("ok"):
-            print(
-                f"    AUTH FAILED: {json.dumps(data.get('error', {}), indent=2)}"
-            )
-            await ws.close()
-            return False
-        else:
-            print(f"    UNEXPECTED: {decode_msg(msg)[:300]}")
-    except asyncio.TimeoutError:
-        print(f"    TIMEOUT — No response in 15s")
-        await ws.close()
-        return False
+    msg = await asyncio.wait_for(ws.recv(), timeout=15)
+    data = json.loads(decode_msg(msg))
+    if data.get("type") == "res" and data.get("ok"):
+        payload = data["payload"]
+        print(f"    Gateway: v{payload.get('protocol')} "
+              f"({len(payload.get('features',{}).get('methods',[]))} methods, "
+              f"{len(payload.get('features',{}).get('events',[]))} events) "
+              f"server={payload.get('server',{}).get('version','?')}")
+        return True
+    elif data.get("type") == "res":
+        print(f"    Gateway connect FAILED: {json.dumps(data.get('error',{}))[:200]}")
+    return False
 
-    if not hello_ok:
-        await ws.close()
-        return False
 
-    # 6. Send chat.send
-    print(f"\n[6] Sending chat.send 'Reply with exactly: WS_BRIDGE_OK'...")
+async def chat_send(ws, message):
+    """Send a chat message and stream the response."""
     chat_id = next_id()
-    await ws.send(
-        json.dumps(
-            {
-                "type": "req",
-                "id": chat_id,
-                "method": "chat.send",
-                "params": {
-                    "sessionKey": "global",
-                    "message": "Reply with exactly: WS_BRIDGE_OK",
-                    "idempotencyKey": next_id(),
-                },
-            }
-        )
-    )
+    await ws.send(json.dumps({
+        "type": "req", "id": chat_id, "method": "chat.send",
+        "params": {
+            "sessionKey": "global",
+            "message": message,
+            "idempotencyKey": next_id(),
+        },
+    }))
 
-    # 7. Collect streaming responses
-    print(f"\n[7] Collecting streaming responses (90s timeout)...")
     response_text = ""
-    got_final = False
     try:
-        deadline = time.time() + 90
+        deadline = time.time() + 120
         while time.time() < deadline:
-            remaining = max(1, deadline - time.time())
-            msg = await asyncio.wait_for(ws.recv(), timeout=remaining)
+            msg = await asyncio.wait_for(ws.recv(), timeout=max(1, deadline - time.time()))
             data = json.loads(decode_msg(msg))
-            msg_type = data.get("type", "?")
-            event_name = data.get("event", "")
 
-            if msg_type == "event" and event_name == "chat":
+            if data.get("type") == "event" and data.get("event") == "chat":
                 payload = data.get("payload", {})
                 state = payload.get("state", "")
-                msg_obj = payload.get("message", {})
-                content = msg_obj.get("content", [])
+                content = payload.get("message", {}).get("content", [])
                 text = ""
                 for block in content:
                     if isinstance(block, dict) and block.get("type") == "text":
                         text = block.get("text", "")
+
                 if state == "delta" and text:
                     new_chars = text[len(response_text):]
                     if new_chars:
@@ -195,39 +198,79 @@ async def test_ws_bridge():
                         sys.stdout.flush()
                     response_text = text
                 elif state == "final":
-                    got_final = True
                     if text:
+                        new_chars = text[len(response_text):]
+                        if new_chars:
+                            sys.stdout.write(new_chars)
                         response_text = text
-                    print(
-                        f"\n    [final] response length: {len(response_text)} chars"
-                    )
-                    break
-            elif msg_type == "res" and data.get("id") == chat_id:
-                ok = data.get("ok")
-                if not ok:
-                    err = data.get("error", {})
-                    print(f"\n    Chat REJECTED: {json.dumps(err)[:200]}")
-                    break
-            # silently skip other broadcasts (health, agent, presence, etc.)
+                    print()
+                    return response_text
+            elif data.get("type") == "res" and data.get("id") == chat_id:
+                if not data.get("ok"):
+                    print(f"\n[error] {json.dumps(data.get('error',{}))[:200]}")
+                    return ""
     except asyncio.TimeoutError:
-        if response_text:
-            print(
-                f"\n    (timeout but got partial response: {len(response_text)} chars)"
-            )
-        else:
-            print(f"\n    TIMEOUT — no chat response received")
+        print(f"\n[timeout after {int(time.time()-deadline+120)}s]")
 
-    # 8. Summary
+    return response_text
+
+
+async def test_ws_bridge(message="Reply with exactly: WS_BRIDGE_OK", interactive=False):
+    # 0. HTTP bootstrap
+    if not warmup_session():
+        print("    FAILED: Container did not become ready")
+        return False
+
+    # 1. Generate presigned URL
+    from bedrock_agentcore.runtime import AgentCoreRuntimeClient
+    client = AgentCoreRuntimeClient(region=REGION)
+    presigned_url = client.generate_presigned_url(
+        runtime_arn=RUNTIME_ARN, session_id=SESSION_ID, expires=300)
+
+    # 2. Connect WebSocket
+    print(f"\n[1] Connecting WebSocket...")
+    try:
+        ws = await websockets.connect(presigned_url, open_timeout=30)
+    except Exception as e:
+        print(f"    FAILED: {e}")
+        return False
+    print(f"    Connected!")
+
+    # 3. Gateway handshake
+    print(f"[2] Gateway Protocol handshake...")
+    if not await gateway_connect(ws):
+        await ws.close()
+        return False
+
+    if interactive:
+        # Interactive chat mode
+        print(f"\n--- Interactive mode (type 'quit' to exit) ---\n")
+        while True:
+            try:
+                user_input = input("You: ")
+            except (EOFError, KeyboardInterrupt):
+                break
+            if user_input.strip().lower() in ("quit", "exit", "q"):
+                break
+            print("AI: ", end="", flush=True)
+            await chat_send(ws, user_input)
+        await ws.close()
+        return True
+
+    # Single message test
+    print(f"[3] Sending: {message}")
+    print("    ", end="", flush=True)
+    response = await chat_send(ws, message)
+
+    # Summary
+    passed = bool(response)
     print(f"\n{'='*60}")
-    passed = hello_ok and (got_final or bool(response_text))
     print(f"RESULT: {'PASS' if passed else 'FAIL'}")
-    print(f"  WebSocket connected:  YES")
-    print(f"  Gateway handshake:    {'YES' if hello_ok else 'NO'}")
-    print(
-        f"  Chat response:        {'YES' if response_text else 'NO'} ({len(response_text)} chars)"
-    )
-    if response_text:
-        print(f"  Response preview:     {response_text[:200]}")
+    print(f"  WebSocket:  Connected")
+    print(f"  Gateway:    Authenticated (Protocol v3)")
+    print(f"  Response:   {len(response)} chars")
+    if response:
+        print(f"  Preview:    {response[:200]}")
     print(f"{'='*60}")
 
     await ws.close()
@@ -235,5 +278,9 @@ async def test_ws_bridge():
 
 
 if __name__ == "__main__":
-    result = asyncio.run(test_ws_bridge())
+    interactive = "--interactive" in sys.argv or "-i" in sys.argv
+    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    message = args[0] if args else "Reply with exactly: WS_BRIDGE_OK"
+
+    result = asyncio.run(test_ws_bridge(message=message, interactive=interactive))
     sys.exit(0 if result else 1)
