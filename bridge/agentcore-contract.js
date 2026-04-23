@@ -2026,7 +2026,10 @@ const server = http.createServer(async (req, res) => {
 const wsBridgeServer = new (require("ws").Server)({ noServer: true });
 
 server.on("upgrade", (req, socket, head) => {
-  if (req.url !== "/ws" && !req.url.startsWith("/ws?")) {
+  console.log(`[ws-bridge] Upgrade request: url=${req.url} headers=${JSON.stringify(req.headers).slice(0, 300)}`);
+
+  if (!req.url.startsWith("/ws")) {
+    console.log(`[ws-bridge] Rejecting non-/ws upgrade: ${req.url}`);
     socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
     socket.destroy();
     return;
@@ -2040,46 +2043,52 @@ server.on("upgrade", (req, socket, head) => {
   }
 
   wsBridgeServer.handleUpgrade(req, socket, head, (downstream) => {
-    console.log("[ws-bridge] Client connected, bridging to OpenClaw Gateway...");
+    console.log("[ws-bridge] Client connected, opening upstream to OpenClaw Gateway...");
     lastActivityTime = Math.floor(Date.now() / 1000);
 
     const upstream = new WebSocket(`ws://127.0.0.1:${OPENCLAW_PORT}`, {
       origin: `http://127.0.0.1:${OPENCLAW_PORT}`,
+      perMessageDeflate: false,
     });
 
     let upstreamOpen = false;
-    const pendingMessages = [];
-
-    upstream.on("open", () => {
-      upstreamOpen = true;
-      console.log("[ws-bridge] Upstream connected to OpenClaw Gateway");
-      for (const msg of pendingMessages) {
-        upstream.send(msg);
-      }
-      pendingMessages.length = 0;
-    });
-
-    downstream.on("message", (data) => {
-      lastActivityTime = Math.floor(Date.now() / 1000);
-      if (upstreamOpen && upstream.readyState === WebSocket.OPEN) {
-        upstream.send(data);
-      } else {
-        pendingMessages.push(data);
-      }
-    });
+    const downstreamBuffer = []; // client messages queued before upstream opens
+    const upstreamBuffer = [];   // gateway messages queued before downstream is wired
 
     upstream.on("message", (data) => {
       lastActivityTime = Math.floor(Date.now() / 1000);
+      const preview = typeof data === "string" ? data.slice(0, 120) : `[binary ${data.length}b]`;
+      console.log(`[ws-bridge] ← upstream: ${preview}`);
       if (downstream.readyState === WebSocket.OPEN) {
         downstream.send(data);
       }
     });
 
-    downstream.on("close", (code, reason) => {
+    upstream.on("open", () => {
+      upstreamOpen = true;
+      console.log(`[ws-bridge] Upstream connected, flushing ${downstreamBuffer.length} queued client messages`);
+      for (const msg of downstreamBuffer) {
+        upstream.send(msg);
+      }
+      downstreamBuffer.length = 0;
+    });
+
+    downstream.on("message", (data) => {
+      lastActivityTime = Math.floor(Date.now() / 1000);
+      const preview = typeof data === "string" ? data.slice(0, 120) : `[binary ${data.length}b]`;
+      console.log(`[ws-bridge] → downstream: ${preview}`);
+      if (upstreamOpen && upstream.readyState === WebSocket.OPEN) {
+        upstream.send(data);
+      } else {
+        downstreamBuffer.push(data);
+      }
+    });
+
+    downstream.on("close", (code) => {
       console.log(`[ws-bridge] Client disconnected (code=${code})`);
       if (upstream.readyState === WebSocket.OPEN) upstream.close();
     });
-    upstream.on("close", (code, reason) => {
+    upstream.on("close", (code) => {
       console.log(`[ws-bridge] Upstream closed (code=${code})`);
       if (downstream.readyState === WebSocket.OPEN) downstream.close();
     });
