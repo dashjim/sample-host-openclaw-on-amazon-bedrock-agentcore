@@ -94,12 +94,12 @@ def is_user_allowed(channel, channel_user_id):
 | 约束 | 详情 |
 |---|---|
 | **OpenClaw Gateway Protocol** | 仅 WebSocket 传输。JSON 文本帧。完整 RPC 接口：`sessions.*`、`chat.*`、`agents.files.*`、`cron.*`、`skills.*`、`tools.*`、`device.*` 等 |
-| **AgentCore Runtime WebSocket** | 原生 `/ws` 端点支持。容器在 8080 端口实现 `/ws` 路径的 WebSocket handler。平台通过 `wss://bedrock-agentcore.<region>.amazonaws.com/runtimes/<arn>/ws` 路由浏览器连接。支持 SigV4、Pre-signed URL、OAuth Bearer 认证。通过 `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` header 实现会话粘性。32KB 帧大小限制 |
+| **AgentCore Runtime WebSocket** | 原生 WebSocket 支持，具备**平台自动桥接**能力 — 平台自动发现容器内部的 WebSocket 端口（18789）并直接桥接浏览器连接。8080 端口不需要 `/ws` handler（已通过 POC 验证）。平台通过 `wss://bedrock-agentcore.<region>.amazonaws.com/runtimes/<arn>/ws` 路由浏览器连接。支持 SigV4、Pre-signed URL、OAuth Bearer 认证。通过 `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` header 实现会话粘性。32KB 帧大小限制 |
 | **容器架构** | OpenClaw Gateway 在 18789 端口（仅 loopback）。Contract 服务器在 8080 端口（`/ping` + `/invocations`）。Proxy 在 18790 端口。Per-user 范围限定 STS 凭证在 `init()` 期间创建 |
 | **AgentCore WS 限制** | 平台转发原始 WebSocket 帧到容器。WS 上下文中无 `userId`/`actorId` — 仅有 `session_id` header 可用。**解决方案**：HTTP 引导阶段先通过 `invoke_agent_runtime` 传递身份信息并完成 `init()`，WS 仅需通过相同 `session_id` 路由到已初始化的容器 |
 | **Per-user 隔离** | 每个用户拥有独立的 AgentCore session（microVM）。`init(userId, actorId, channel)` 创建命名空间范围限定的 STS 凭证，将 S3/DynamoDB 访问限制在用户前缀内 |
 | **Cognito 内部角色** | 现有 `openclaw-identity-pool` 是**纯后端组件** — proxy 使用 HMAC 派生密码自动创建用户，生成 JWT 给 OpenClaw。终端用户从不接触它。Web UI 需要新建面向用户的 Cognito Pool |
-| **OpenClaw Gateway 已在容器中** | `openclaw gateway run --port 18789` 是完整 Gateway 服务器。当前 `bridgeMessage()` 仅用 `connect` + `chat.send`（冰山一角）。浏览器无法直连 18789（loopback），需在 8080 `/ws` 做透明桥接 |
+| **OpenClaw Gateway 已在容器中** | `openclaw gateway run --port 18789` 是完整 Gateway 服务器。当前 `bridgeMessage()` 仅用 `connect` + `chat.send`（冰山一角）。浏览器无法直连 18789（loopback），但 **AgentCore 平台会自动发现并桥接到该端口** — 8080 不需要 `/ws` handler（已通过 POC 验证） |
 
 ---
 
@@ -109,7 +109,7 @@ def is_user_allowed(channel, channel_user_id):
 
 1. **暴露完整的 OpenClaw Gateway Protocol** 给浏览器客户端 — 不仅仅是聊天，还包括会话管理、文件 CRUD（`agents.files.*`）、对话历史（`chat.history`）、定时任务调度、技能管理、自动修复等全部 RPC 族
 2. **复用现有的 per-user 隔离体系** — DynamoDB 身份解析、会话管理、范围限定 STS 凭证、S3 命名空间隔离
-3. **最小化容器侧改动** — 理想情况下仅在 `agentcore-contract.js` 中添加 `/ws` handler
+3. **容器侧零改动** — AgentCore 平台自动桥接 WebSocket 连接到现有 OpenClaw Gateway（已通过 POC 验证）
 4. **支持企业 IdP 联邦** — 企业 SAML/OIDC 提供商可即插即用，无需修改内部认证链路
 5. **支持实时流式传输** — 逐 token 响应增量、会话事件、在线状态、工具执行进度
 
@@ -156,21 +156,21 @@ def is_user_allowed(channel, channel_user_id):
     │←── {sessionId, wsUrl} ───│                              │
     │                          │                              │
 
-阶段 2：WebSocket Gateway Protocol（新增，容器侧最小改动）
-════════════════════════════════════════════════════════════════════
+阶段 2：WebSocket Gateway Protocol（容器零改动 — 平台自动桥接）
+════════════════════════════════════════════════════════════════════════
 
   浏览器                                AgentCore 平台          容器
     │                                        │                      │
     │── WSS 连接 ──────────────────────────→│                      │
     │   wss://bedrock-agentcore.../ws        │                      │
-    │   ?Session-Id=ses_xxx                  │──── WS 升级 ───────→│ /ws handler
-    │   (OAuth Bearer token)                 │   (同一 session!)    │
+    │   (SigV4 presigned URL)                │── 自动发现 ─────────→│ 端口 18789
+    │   ?Session-Id=ses_xxx                  │   内部 WS 端口       │ (OpenClaw Gateway)
     │                                        │                      │
     │←─────────────── WS 已连接 ─────────────│←─────────────────────│
     │                                        │                      │
     │── Gateway Protocol 帧 ───────────────────────────────────────│
-    │   {type:"req", method:"connect", ...}  │                      │──→ ws://127.0.0.1:18789
-    │                                        │                      │    (OpenClaw Gateway)
+    │   {type:"req", method:"connect", ...}  │    自动桥接           │──→ OpenClaw Gateway
+    │                                        │                      │    (直连，无需 /ws handler)
     │←── {type:"res", ok:true, ...} ─────────│←─────────────────────│
     │                                        │                      │
     │── {method:"chat.send", ...} ─────────────────────────────────│──→ OpenClaw Gateway
@@ -303,60 +303,23 @@ def handle_create_session(event):
 
 API Gateway HTTP API 配合 Cognito JWT 授权器 — 无需自定义认证代码。
 
-#### 4. 容器 `/ws` Handler（`agentcore-contract.js` 最小改动）
+#### 4. 容器 WebSocket：零改动（AgentCore 平台自动桥接）
 
-唯一的容器侧改动：从 AgentCore `/ws` 到 OpenClaw Gateway 18789 端口的透明 WebSocket-to-WebSocket 桥接。
+**关键 POC 发现（2026-04-23）**：AgentCore 平台会**自动发现**容器内部的 WebSocket 端口（OpenClaw Gateway 的 18789 端口），并将浏览器 WSS 连接直接桥接到该端口。不需要在 8080 端口实现 `/ws` handler。
 
-```javascript
-// agentcore-contract.js — 新增 /ws handler（添加到现有 HTTP 服务器）
+**工作原理**：
+1. 浏览器连接到 `wss://bedrock-agentcore.<region>.amazonaws.com/runtimes/<arn>/ws`（SigV4 presigned URL）
+2. AgentCore 平台自动发现容器内的 WebSocket 监听端口 18789
+3. 平台透明地将浏览器连接桥接到内部端口
+4. OpenClaw Gateway 直接接收连接 — 完整的 Gateway Protocol 端到端可用
 
-server.on("upgrade", (req, socket, head) => {
-  if (req.url !== "/ws") {
-    socket.destroy();
-    return;
-  }
+**对设计的影响**：
+- **不需要 `/ws` handler** — `agentcore-contract.js` 无需任何改动，平台处理所有 WebSocket 路由
+- **不需要 `ws` npm 依赖** — 消除了一个潜在的 bug 来源
+- **容器代码零改动** 即可支持 Web UI WebSocket — 现有的 OpenClaw Gateway（18789 端口）通过平台自动桥接直接可达
+- **32KB AgentCore 帧限制** 仍然适用 — OpenClaw Gateway 自身 `maxPayload` 为 25MB，但 AgentCore 限制为 32KB。大型 `agents.files.set` 负载需要客户端分块（在客户端 SDK 层面处理）
 
-  // 容器已通过 HTTP warmup 完成初始化 — 直接桥接
-  if (!openclawReady) {
-    socket.write("HTTP/1.1 503 Service Unavailable\r\n\r\n");
-    socket.destroy();
-    return;
-  }
-
-  // 创建到 OpenClaw Gateway 的上游连接
-  const upstream = new WebSocket(`ws://127.0.0.1:${OPENCLAW_PORT}`, {
-    origin: `http://127.0.0.1:${OPENCLAW_PORT}`,
-  });
-
-  // 接受下游连接（AgentCore 平台 → 浏览器）
-  const wss = new WebSocket.Server({ noServer: true });
-  wss.handleUpgrade(req, socket, head, (downstream) => {
-    // 双向帧转发 — 零解析、零转换
-    downstream.on("message", (data) => {
-      if (upstream.readyState === WebSocket.OPEN) {
-        upstream.send(data);
-      }
-    });
-    upstream.on("message", (data) => {
-      if (downstream.readyState === WebSocket.OPEN) {
-        downstream.send(data);
-      }
-    });
-
-    // 生命周期管理
-    downstream.on("close", () => upstream.close());
-    upstream.on("close", () => downstream.close());
-    downstream.on("error", () => upstream.close());
-    upstream.on("error", () => downstream.close());
-  });
-});
-```
-
-关键设计决策：
-- **零帧解析** — 原始双向转发。Gateway Protocol 在浏览器和 OpenClaw Gateway 之间；桥接层完全透明
-- **桥接层无认证逻辑** — 认证已在两层完成：AgentCore 平台（OAuth JWT）和 OpenClaw Gateway（`connect` 握手时的 token 认证）
-- **无 init 逻辑** — HTTP 引导阶段保证容器在 WebSocket 连接前已完成初始化
-- **32KB AgentCore 帧限制** — OpenClaw Gateway 自身 `maxPayload` 为 25MB，但 AgentCore 限制为 32KB。大型 `agents.files.set` 负载需要客户端分块（在客户端 SDK 层面处理）
+相比原始设计（假设需要在 contract server 中实现约 50 行的 WebSocket-to-WebSocket 桥接），这是一个重大简化。
 
 #### 5. Web UI 前端（S3+CloudFront 上的 React SPA）
 
@@ -513,6 +476,27 @@ cmd_add() {
 - 管理脚本风格与现有 `manage-allowlist.sh` 保持一致
 - 企业 IdP 场景：如果 IdP 本身已做准入控制（如仅限公司员工），可设 `registration_open: true` 省去白名单步骤
 
+#### POC 验证结果（2026-04-23）
+
+进行了概念验证（POC）以验证 WebSocket 连接的假设。结果确认 AgentCore 平台提供自动 WebSocket 桥接，消除了容器侧 `/ws` handler 的需求。
+
+**测试内容**：
+
+| 测试项 | 方法 | 结果 |
+|---|---|---|
+| 浏览器 WSS 连接 | `wss://bedrock-agentcore.<region>.amazonaws.com/runtimes/<arn>/ws`（SigV4 presigned URL） | 连接成功 |
+| 平台自动桥接到容器 | AgentCore 平台自动发现 18789 端口（OpenClaw Gateway） | 自动桥接成功 |
+| Gateway 握手 | `connect` 请求，protocol v3 | `hello-ok` 响应：protocol v3、97 个方法、19 个事件、服务器版本 2026.3.8 |
+| 聊天往返 | `chat.send` 发送测试消息 | 收到流式 delta 事件，随后收到 final 响应 |
+| 端到端延迟 | 完整的浏览器→Gateway→Bedrock→浏览器链路 | 与现有 HTTP invocation 路径相当 |
+
+**关键发现**：AgentCore 平台自动发现容器内部的 WebSocket 端口，并将浏览器连接直接桥接到该端口。`agentcore-contract.js` 中不需要任何 `/ws` handler 代码。这是原始设计中最大的假设（认为需要约 50 行的桥接 handler），POC 证明了这是不必要的。
+
+**对实施的影响**：
+- `agentcore-contract.js` 的变更影响从"小"降为"无"
+- 整体设计更加简洁、可维护 — 容器内更少的活动部件
+- 剩余工作完全在基础设施侧（Cognito、API Lambda、CDK stack、前端）
+
 ### 认证流程（完整链路）
 
 ```
@@ -534,11 +518,11 @@ cmd_add() {
   │   Sec-WebSocket-Protocol:                       │                  │               │
   │     base64UrlBearerAuthorization.<JWT>          │                  │               │
   │   ?Session-Id=ses_xxx                           │[OAuth 验证]      │               │
-  │                                                 │                  │── /ws ───────→│
+  │                                                 │                  │── 自动桥接 ──→│
   │←── WS 已连接 ───────────────────────────────────────────────────────────────────── │
-  │                                                 │                  │               │
+  │                                                 │                  │  (端口 18789) │
   │── Gateway Protocol ─────────────────────────────────────────────────────────────→ │
-  │   (connect → chat.send → sessions.list → ...)   │                  │  ↕ 桥接 ↕     │
+  │   (connect → chat.send → sessions.list → ...)   │                  │  自动桥接      │
   │←── Gateway Protocol 事件 ──────────────────────────────────────────────────────── │
   │                                                 │                  │  ws://18789   │
 ```
@@ -588,7 +572,7 @@ Web 用户可绑定到现有 Telegram/Slack 账号：
 
 | 组件 | 变更类型 | 工作量 |
 |---|---|---|
-| `bridge/agentcore-contract.js` | 新增 `/ws` handler（约 50 行） | 小 |
+| `bridge/agentcore-contract.js` | **零改动** | 无 |
 | `stacks/security_stack.py` | 新增 Web Cognito User Pool | 小 |
 | `stacks/web_ui_stack.py` | 新建 stack（API GW + Lambda + S3/CF） | 中 |
 | `lambda/web_api/index.py` | 新建 Lambda（复用 router 逻辑） | 中 |
@@ -617,7 +601,7 @@ Web 用户可绑定到现有 Telegram/Slack 账号：
 
 ### Q2: 为什么不能让浏览器直接 WebSocket 连到 OpenClaw Gateway（18789）？
 
-因为 OpenClaw Gateway 绑定 `127.0.0.1:18789`（容器内部 loopback）。AgentCore 平台只暴露容器的 8080 端口（`/ping`、`/invocations`、`/ws`）。所以必须在 8080 的 `/ws` 做一层透明桥接。
+因为 OpenClaw Gateway 绑定 `127.0.0.1:18789`（容器内部 loopback），浏览器无法直连。但 **POC 验证发现 AgentCore 平台会自动发现容器内部的 WebSocket 端口（18789）并透明桥接**。浏览器通过 `wss://bedrock-agentcore.../ws`（SigV4 presigned URL）连接，平台自动将连接桥接到容器的 18789 端口。不需要在 8080 端口实现 `/ws` handler — 这是原始设计中最大的简化。
 
 ### Q3: AgentCore WebSocket 的 32KB 帧限制会影响什么？
 
@@ -731,7 +715,7 @@ S3 目录结构：`s3://openclaw-user-files-{account}-{region}/web_sub_xxx/`
 - 独立的 Cognito User Pool
 - 独立的 API Gateway
 - 独立的 Lambda
-- 容器侧只新增 `/ws` handler，不修改 `/invocations`
+- 容器侧零改动 — AgentCore 平台自动桥接 WebSocket 到 OpenClaw Gateway（18789），不需要新增 `/ws` handler，不修改 `/invocations`
 - 现有 `bridgeMessage()`、`chat` action、`cron` action 全部保持不变
 
 ### Q11: 为什么用 HTTP 引导 + WS 两阶段，而不是纯 WebSocket？
