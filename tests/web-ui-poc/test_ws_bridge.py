@@ -220,9 +220,9 @@ SYSTEM_COMMANDS = {
     "/status":      ("status", {}),
     "/sessions":    ("sessions.list", {}),
     "/history":     ("chat.history", {"sessionKey": "global"}),
-    "/files":       ("agents.files.list", {}),
-    "/skills":      ("skills.status", {}),
-    "/tools":       ("tools.catalog", {}),
+    "/files":       ("agents.files.list", {"agentId": "main"}),
+    "/skills":      ("skills.status", {"agentId": "main"}),
+    "/tools":       ("tools.catalog", {"agentId": "main"}),
     "/models":      ("models.list", {}),
     "/usage":       ("usage.status", {}),
     "/cron":        ("cron.list", {}),
@@ -290,7 +290,7 @@ async def handle_system_command(ws, cmd_str, dump_mode=False):
             print("  Usage: /files.get <path>")
             return
         path = parts[1]
-        resp = await send_rpc(ws, "agents.files.get", {"path": path})
+        resp = await send_rpc(ws, "agents.files.get", {"agentId": "main", "path": path})
         if resp and resp.get("ok"):
             content = resp.get("payload", {}).get("content", "")
             print(f"  --- {path} ({len(content)} chars) ---")
