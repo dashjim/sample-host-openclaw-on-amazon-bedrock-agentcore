@@ -215,6 +215,124 @@ async def chat_send(ws, message):
     return response_text
 
 
+SYSTEM_COMMANDS = {
+    "/health":      ("health", {}),
+    "/status":      ("status", {}),
+    "/sessions":    ("sessions.list", {}),
+    "/history":     ("chat.history", {"sessionKey": "global"}),
+    "/files":       ("agents.files.list", {}),
+    "/skills":      ("skills.status", {}),
+    "/tools":       ("tools.catalog", {}),
+    "/models":      ("models.list", {}),
+    "/usage":       ("usage.status", {}),
+    "/cron":        ("cron.list", {}),
+    "/config":      ("config.get", {}),
+    "/diagnostics": ("diagnostics.stability", {}),
+}
+
+
+async def send_rpc(ws, method, params=None):
+    """Send a Gateway RPC request and collect the response, skipping broadcast events."""
+    req_id = next_id()
+    await ws.send(json.dumps({
+        "type": "req", "id": req_id, "method": method,
+        "params": params or {},
+    }))
+
+    try:
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            msg = await asyncio.wait_for(ws.recv(), timeout=max(1, deadline - time.time()))
+            data = json.loads(decode_msg(msg))
+            if data.get("type") == "res" and data.get("id") == req_id:
+                return data
+            # Skip broadcast events (health, agent, presence, etc.)
+    except asyncio.TimeoutError:
+        return {"ok": False, "error": {"code": "TIMEOUT", "message": f"No response for {method} in 15s"}}
+    except websockets.exceptions.ConnectionClosed as e:
+        return {"ok": False, "error": {"code": "CONNECTION_CLOSED", "message": str(e)}}
+
+
+def format_rpc_response(data):
+    """Pretty-print an RPC response."""
+    if not data:
+        return "  (no response)"
+    ok = data.get("ok")
+    if ok:
+        payload = data.get("payload", {})
+        return json.dumps(payload, indent=2, ensure_ascii=False)
+    else:
+        err = data.get("error", {})
+        return f"  ERROR: {json.dumps(err, ensure_ascii=False)}"
+
+
+async def handle_system_command(ws, cmd_str, dump_mode=False):
+    """Handle /command inputs — maps to Gateway Protocol RPC methods."""
+    parts = cmd_str.strip().split(None, 2)
+    cmd = parts[0].lower()
+
+    if cmd == "/dump":
+        return
+
+    if cmd == "/raw":
+        if len(parts) < 2:
+            print("  Usage: /raw <method> [json_params]")
+            return
+        method = parts[1]
+        params = json.loads(parts[2]) if len(parts) > 2 else {}
+        print(f"  → {method} {json.dumps(params) if params else ''}")
+        resp = await send_rpc(ws, method, params)
+        print(format_rpc_response(resp))
+        return
+
+    if cmd == "/files.get":
+        if len(parts) < 2:
+            print("  Usage: /files.get <path>")
+            return
+        path = parts[1]
+        resp = await send_rpc(ws, "agents.files.get", {"path": path})
+        if resp and resp.get("ok"):
+            content = resp.get("payload", {}).get("content", "")
+            print(f"  --- {path} ({len(content)} chars) ---")
+            print(content[:2000])
+            if len(content) > 2000:
+                print(f"  ... ({len(content) - 2000} chars truncated)")
+        else:
+            print(format_rpc_response(resp))
+        return
+
+    if cmd == "/history":
+        resp = await send_rpc(ws, "chat.history", {"sessionKey": "global"})
+        if resp and resp.get("ok"):
+            messages = resp.get("payload", {}).get("messages", resp.get("payload", {}).get("rows", []))
+            if isinstance(messages, list):
+                print(f"  --- {len(messages)} messages ---")
+                for m in messages[-10:]:
+                    role = m.get("role", "?")
+                    content = m.get("content", "")
+                    if isinstance(content, list):
+                        text = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
+                    else:
+                        text = str(content)
+                    preview = text[:120].replace("\n", " ")
+                    print(f"  [{role}] {preview}")
+            else:
+                print(format_rpc_response(resp))
+        else:
+            print(format_rpc_response(resp))
+        return
+
+    if cmd in SYSTEM_COMMANDS:
+        method, params = SYSTEM_COMMANDS[cmd]
+        print(f"  → {method}")
+        resp = await send_rpc(ws, method, params)
+        print(format_rpc_response(resp))
+        return
+
+    print(f"  Unknown command: {cmd}")
+    print(f"  Type /help or see the command list above")
+
+
 async def test_ws_bridge(message="Reply with exactly: WS_BRIDGE_OK", interactive=False):
     # 0. HTTP bootstrap
     if not warmup_session():
@@ -243,17 +361,51 @@ async def test_ws_bridge(message="Reply with exactly: WS_BRIDGE_OK", interactive
         return False
 
     if interactive:
-        # Interactive chat mode
-        print(f"\n--- Interactive mode (type 'quit' to exit) ---\n")
+        print(f"\n--- Interactive mode ---")
+        print(f"  Chat:    type message and press Enter")
+        print(f"  System:  /command to call Gateway Protocol methods")
+        print(f"  Quit:    /quit or Ctrl+C")
+        print(f"")
+        print(f"  Available /commands:")
+        print(f"    /health              — Gateway health snapshot")
+        print(f"    /status              — Gateway status summary")
+        print(f"    /sessions            — List all sessions")
+        print(f"    /history             — Chat history (current session)")
+        print(f"    /files               — List workspace files")
+        print(f"    /files.get <path>    — Read a workspace file")
+        print(f"    /skills              — Installed skills status")
+        print(f"    /tools               — Tool catalog")
+        print(f"    /models              — Available models")
+        print(f"    /usage               — Usage status")
+        print(f"    /cron                — List cron schedules")
+        print(f"    /config              — Current config snapshot")
+        print(f"    /diagnostics         — Stability diagnostics")
+        print(f"    /raw <method> [json] — Send arbitrary RPC method")
+        print(f"    /dump                — Show raw frames for next response")
+        print()
+
+        dump_mode = False
         while True:
             try:
                 user_input = input("You: ")
             except (EOFError, KeyboardInterrupt):
+                print()
                 break
-            if user_input.strip().lower() in ("quit", "exit", "q"):
+            stripped = user_input.strip()
+            if not stripped:
+                continue
+            if stripped.lower() in ("/quit", "/exit", "/q", "quit", "exit", "q"):
                 break
+
+            if stripped.startswith("/"):
+                await handle_system_command(ws, stripped, dump_mode)
+                if stripped == "/dump":
+                    dump_mode = not dump_mode
+                    print(f"  [dump mode {'ON' if dump_mode else 'OFF'}]")
+                continue
+
             print("AI: ", end="", flush=True)
-            await chat_send(ws, user_input)
+            await chat_send(ws, stripped)
         await ws.close()
         return True
 
