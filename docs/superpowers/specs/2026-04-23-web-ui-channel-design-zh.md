@@ -316,62 +316,98 @@ AgentCore 平台
 
 **POC 验证（2026-04-23）使用的是方案 A** — SigV4 Pre-signed URL，已端到端验证通过。
 
-#### 3. Web API Lambda（新建，基于现有 Router Lambda 的薄层封装）
+#### 3. Web API Lambda（已实现：`lambda/web_api/index.py`）
 
-处理 HTTP 引导阶段的轻量 Lambda。复用 Router Lambda 的核心函数（用户解析、会话管理、AgentCore 调用），但使用 Web 专属认证：
+独立 Lambda 处理 HTTP 引导阶段。复用 Router Lambda 的核心逻辑（用户解析、会话管理），但认证方式不同（Cognito JWT vs Webhook 签名），职责也不同（返回 WSS URL vs 发消息到 channel）。
+
+**端点设计**：
+
+| 端点 | 功能 | 返回 |
+|---|---|---|
+| `POST /api/session` | JWT 验证 → resolve_user → warmup → 生成 pre-signed URL | `{sessionId, wsUrl, wsExpires, status}` |
+| `GET /api/session` | 检查已有 session + 刷新 pre-signed URL | `{sessionId, wsUrl, wsExpires}` |
+| `POST /api/link` | 生成跨通道绑定码（关联 Web 和 Telegram/Slack） | `{bindCode, expiresIn}` |
+
+**核心流程（`POST /api/session`）**：
 
 ```python
-# lambda/web_api/index.py
-
-def handler(event, context):
-    """Web UI API — 会话引导和用户管理"""
-    path = event["rawPath"]
-    method = event["requestContext"]["http"]["method"]
-
-    if method == "POST" and path == "/api/session":
-        return handle_create_session(event)
-    if method == "GET" and path == "/api/session":
-        return handle_get_session(event)
-    if method == "POST" and path == "/api/link":
-        return handle_link_channel(event)
-
 def handle_create_session(event):
-    """引导：解析用户 → 预热 AgentCore → 返回会话信息"""
-    # 1. 提取 Cognito JWT claims
-    jwt_claims = event["requestContext"]["authorizer"]["jwt"]["claims"]
-    cognito_sub = jwt_claims["sub"]
+    # 1. JWT claims 由 API Gateway 授权器验证并注入
+    claims = event["requestContext"]["authorizer"]["jwt"]["claims"]
+    cognito_sub = claims["sub"]
     actor_id = f"web:{cognito_sub}"
 
-    # 2. 在 DynamoDB 中解析或创建用户（复用现有逻辑）
-    user_id = resolve_user(actor_id)
+    # 2. DynamoDB 用户解析（与 Telegram/Slack 完全相同的逻辑）
+    user_id, is_new = resolve_user("web", cognito_sub, display_name=claims.get("email", ""))
 
-    # 3. 获取或创建 AgentCore session（复用现有逻辑）
+    # 3. 获取或创建 AgentCore session
     session_id = get_or_create_session(user_id)
 
-    # 4. 预热容器（触发 init，建立身份 + 范围限定凭证）
-    invoke_agent_runtime(
-        session_id=session_id,
-        user_id=user_id,
-        actor_id=actor_id,
-        channel="web",
-        message=None,
-        action="warmup",
-    )
+    # 4. Warmup 容器（IAM SigV4，触发 init + scoped credentials）
+    status = warmup_container(session_id, user_id, actor_id)
 
-    # 5. 返回会话信息，供 WebSocket 连接使用
-    return {
-        "statusCode": 200,
-        "body": json.dumps({
-            "sessionId": session_id,
-            "wsEndpoint": f"wss://bedrock-agentcore.{REGION}.amazonaws.com"
-                          f"/runtimes/{RUNTIME_ARN}/ws",
-            "runtimeArn": RUNTIME_ARN,
-            "status": "ready",
-        }),
-    }
+    # 5. 生成 SigV4 Pre-signed WSS URL（botocore 原生，零外部依赖）
+    ws_url = generate_presigned_ws_url(AGENTCORE_RUNTIME_ARN, session_id, expires=300)
+
+    # 浏览器拿到 wsUrl 后直接 new WebSocket(wsUrl) — 无需 AWS SDK
+    return {"sessionId": session_id, "wsUrl": ws_url, "wsExpires": 300, "status": status}
 ```
 
-API Gateway HTTP API 配合 Cognito JWT 授权器 — 无需自定义认证代码。
+**Pre-signed URL 生成（零外部依赖）**：
+
+```python
+from botocore.auth import SigV4QueryAuth
+from botocore.awsrequest import AWSRequest
+
+def generate_presigned_ws_url(runtime_arn, session_id, expires=300):
+    """用 botocore 原生 SigV4QueryAuth 生成签名 URL — Lambda runtime 自带，无需额外打包。"""
+    encoded_arn = quote(runtime_arn, safe="")
+    base_url = f"https://bedrock-agentcore.{AWS_REGION}.amazonaws.com/runtimes/{encoded_arn}/ws"
+    params = {
+        "qualifier": AGENTCORE_QUALIFIER,
+        "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": session_id,
+    }
+    url_with_params = f"{base_url}?{urlencode(params)}"
+
+    credentials = boto3.Session().get_credentials().get_frozen_credentials()
+    request = AWSRequest(method="GET", url=url_with_params,
+                         headers={"host": f"bedrock-agentcore.{AWS_REGION}.amazonaws.com"})
+    SigV4QueryAuth(credentials, "bedrock-agentcore", AWS_REGION, expires=expires).add_auth(request)
+    return request.url.replace("https://", "wss://")
+```
+
+**浏览器使用**：
+
+```javascript
+// 1. 登录获取 JWT
+const jwt = await cognito.signIn(username, password);
+
+// 2. 一次 HTTP 调用获取 wsUrl（Lambda 内部完成 warmup + 签名）
+const resp = await fetch("/api/session", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${jwt.idToken}` },
+});
+const { sessionId, wsUrl, wsExpires } = await resp.json();
+
+// 3. 直连 WebSocket — 无需 AWS SDK、无需 IAM 凭证
+const ws = new WebSocket(wsUrl);
+ws.onopen = () => {
+    // 发送 Gateway Protocol connect 请求...
+};
+```
+
+**与 Router Lambda 的区别**：
+
+| | Router Lambda | Web API Lambda |
+|---|---|---|
+| 认证 | Webhook 签名（HMAC/AES） | Cognito JWT（API GW 授权器） |
+| 入口 | `POST /webhook/telegram` 等 | `POST /api/session` |
+| 输出 | 调 channel API 发消息 | 返回 `{sessionId, wsUrl}` |
+| 核心逻辑 | `resolve_user` + `invoke_agent_runtime` + channel dispatch | `resolve_user` + `warmup` + `generate_presigned_ws_url` |
+| 代码位置 | `lambda/router/index.py` | `lambda/web_api/index.py` |
+| 外部依赖 | 零（boto3/botocore 来自 Lambda runtime） | 零（同上） |
+
+API Gateway HTTP API 配合 Cognito JWT 授权器 — Lambda 内部无需自定义 JWT 验证代码。
 
 #### 4. 容器 WebSocket：零改动（AgentCore 平台自动桥接）
 
@@ -640,19 +676,20 @@ Web 用户可绑定到现有 Telegram/Slack 账号：
 
 ### 变更影响范围
 
-| 组件 | 变更类型 | 工作量 |
-|---|---|---|
-| `bridge/agentcore-contract.js` | **零改动** | 无 |
-| `stacks/security_stack.py` | 新增 Web Cognito User Pool | 小 |
-| `stacks/web_ui_stack.py` | 新建 stack（API GW + Lambda + S3/CF） | 中 |
-| `lambda/web_api/index.py` | 新建 Lambda（复用 router 逻辑） | 中 |
-| `scripts/manage-web-users.sh` | 新建管理脚本（Cognito + 白名单） | 小 |
-| AgentCore Endpoint 配置 | 添加 CUSTOM_JWT 授权器 | 仅配置 |
-| `web-ui/` | 新建 React SPA | 大（但独立） |
-| 现有通道 | **零改动** | 无 |
-| `bridge/agentcore-proxy.js` | **零改动** | 无 |
-| `bridge/lightweight-agent.js` | **零改动** | 无 |
-| 范围限定凭证 | **零改动** | 无 |
+| 组件 | 变更类型 | 状态 | 工作量 |
+|---|---|---|---|
+| `bridge/agentcore-contract.js` | **零改动** | — | 无 |
+| `lambda/web_api/index.py` | 新建 Lambda（3 个端点，388 行） | **已实现** | 中 |
+| `stacks/security_stack.py` | 新增 Web Cognito User Pool | 待实现 | 小 |
+| `stacks/web_ui_stack.py` | 新建 stack（API GW + Lambda + S3/CF） | 待实现 | 中 |
+| `scripts/manage-web-users.sh` | 新建管理脚本（Cognito + 白名单） | 待实现 | 小 |
+| AgentCore Endpoint 配置 | **方案 A 无需配置**（保持 SigV4，用 Pre-signed URL） | — | 无 |
+| `web-ui/` | 新建 React SPA | 待实现 | 大（但独立） |
+| `tests/web-ui-poc/` | POC 测试脚本 + README | **已实现** | — |
+| 现有通道 | **零改动** | — | 无 |
+| `bridge/agentcore-proxy.js` | **零改动** | — | 无 |
+| `bridge/lightweight-agent.js` | **零改动** | — | 无 |
+| 范围限定凭证 | **零改动** | — | 无 |
 
 ### 不在范围内
 
