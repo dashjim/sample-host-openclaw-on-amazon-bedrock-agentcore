@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>OpenClaw WebSocket POC</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+  h1 { color: #7ec8e3; margin-bottom: 16px; font-size: 18px; }
+  .section { margin-bottom: 16px; }
+  label { display: block; color: #888; font-size: 12px; margin-bottom: 4px; }
+  input, select { width: 100%; padding: 8px; background: #16213e; border: 1px solid #333; color: #e0e0e0; font-family: monospace; font-size: 13px; border-radius: 4px; }
+  button { padding: 8px 16px; background: #0f3460; color: #e0e0e0; border: 1px solid #555; cursor: pointer; font-family: monospace; border-radius: 4px; margin-right: 8px; }
+  button:hover { background: #1a5276; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #log { background: #0d1117; border: 1px solid #333; padding: 12px; height: 400px; overflow-y: auto; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; border-radius: 4px; }
+  .rx { color: #7ec8e3; }
+  .tx { color: #f0a500; }
+  .sys { color: #666; }
+  .err { color: #e74c3c; }
+  .ok { color: #2ecc71; }
+  .row { display: flex; gap: 8px; align-items: end; }
+  .row > * { flex: 1; }
+  #chatRow { display: flex; gap: 8px; margin-top: 8px; }
+  #chatRow input { flex: 1; }
+</style>
+</head>
+<body>
+<h1>OpenClaw Gateway Protocol — WebSocket POC</h1>
+
+<div class="section">
+  <div class="row">
+    <div>
+      <label>WebSocket URL</label>
+      <input id="wsUrl" placeholder="wss://bedrock-agentcore.us-west-2.amazonaws.com/runtimes/{arn}/ws">
+    </div>
+    <div style="flex:0 0 auto">
+      <button id="btnConnect" onclick="doConnect()">Connect</button>
+      <button id="btnDisconnect" onclick="doDisconnect()" disabled>Disconnect</button>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="row">
+    <div>
+      <label>Gateway Token (for OpenClaw connect handshake)</label>
+      <input id="gatewayToken" type="password" placeholder="Token from Secrets Manager">
+    </div>
+    <div>
+      <label>Session ID (optional, for AgentCore routing)</label>
+      <input id="sessionId" placeholder="ses_user_abc_xxxx">
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <label>Quick Actions</label>
+  <button onclick="sendGatewayConnect()">1. Gateway Connect</button>
+  <button onclick="sendChatSend()">2. Chat Send</button>
+  <button onclick="sendSessionsList()">sessions.list</button>
+  <button onclick="sendChatHistory()">chat.history</button>
+  <button onclick="sendHealth()">health</button>
+  <div id="chatRow">
+    <input id="chatMsg" placeholder="Type a message for chat.send..." onkeydown="if(event.key==='Enter')sendChatSend()">
+  </div>
+</div>
+
+<div class="section">
+  <label>Log</label>
+  <div id="log"></div>
+</div>
+
+<script>
+let ws = null;
+let reqId = 0;
+
+function log(cls, text) {
+  const el = document.getElementById('log');
+  const ts = new Date().toISOString().slice(11, 23);
+  el.innerHTML += `<span class="${cls}">[${ts}] ${text}</span>\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function nextId() { return `req_${++reqId}_${Date.now()}`; }
+
+function send(obj) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) { log('err', 'Not connected'); return; }
+  const json = JSON.stringify(obj);
+  log('tx', '>>> ' + json);
+  ws.send(json);
+}
+
+function doConnect() {
+  const url = document.getElementById('wsUrl').value.trim();
+  if (!url) { log('err', 'Enter WebSocket URL'); return; }
+
+  let fullUrl = url;
+  const sid = document.getElementById('sessionId').value.trim();
+  if (sid) {
+    const sep = url.includes('?') ? '&' : '?';
+    fullUrl += `${sep}X-Amzn-Bedrock-AgentCore-Runtime-Session-Id=${encodeURIComponent(sid)}`;
+  }
+
+  log('sys', `Connecting to ${fullUrl}...`);
+  try {
+    ws = new WebSocket(fullUrl);
+  } catch (e) {
+    log('err', `Connection failed: ${e.message}`);
+    return;
+  }
+
+  ws.onopen = () => {
+    log('ok', 'WebSocket connected');
+    document.getElementById('btnConnect').disabled = true;
+    document.getElementById('btnDisconnect').disabled = false;
+  };
+  ws.onmessage = (e) => {
+    log('rx', '<<< ' + e.data);
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'event' && msg.event === 'connect.challenge') {
+        log('sys', 'Got connect.challenge — click "1. Gateway Connect" to authenticate');
+      }
+    } catch {}
+  };
+  ws.onclose = (e) => {
+    log('sys', `Disconnected (code=${e.code} reason=${e.reason || 'none'})`);
+    document.getElementById('btnConnect').disabled = false;
+    document.getElementById('btnDisconnect').disabled = true;
+    ws = null;
+  };
+  ws.onerror = (e) => { log('err', 'WebSocket error'); };
+}
+
+function doDisconnect() {
+  if (ws) ws.close();
+}
+
+function sendGatewayConnect() {
+  const token = document.getElementById('gatewayToken').value.trim();
+  send({
+    type: "req", id: nextId(), method: "connect",
+    params: {
+      minProtocol: 3, maxProtocol: 3,
+      client: { id: "web-ui-poc", version: "0.1.0", platform: "browser", mode: "operator" },
+      role: "operator",
+      scopes: ["operator.read", "operator.write", "operator.admin"],
+      caps: [], commands: [], permissions: {},
+      auth: { token: token },
+      locale: navigator.language || "en-US",
+      userAgent: "openclaw-web-poc/0.1.0",
+    },
+  });
+}
+
+function sendChatSend() {
+  const msg = document.getElementById('chatMsg').value.trim() || 'Hello from Web UI POC!';
+  send({
+    type: "req", id: nextId(), method: "chat.send",
+    params: { sessionKey: "global", message: msg, idempotencyKey: nextId() },
+  });
+  document.getElementById('chatMsg').value = '';
+}
+
+function sendSessionsList() {
+  send({ type: "req", id: nextId(), method: "sessions.list", params: {} });
+}
+
+function sendChatHistory() {
+  send({ type: "req", id: nextId(), method: "chat.history", params: { sessionKey: "global" } });
+}
+
+function sendHealth() {
+  send({ type: "req", id: nextId(), method: "health", params: {} });
+}
+</script>
+</body>
+</html>

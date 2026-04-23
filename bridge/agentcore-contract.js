@@ -2019,6 +2019,81 @@ const server = http.createServer(async (req, res) => {
   res.end(JSON.stringify({ error: "Not found" }));
 });
 
+// --- WebSocket bridge: /ws → OpenClaw Gateway (port 18789) ---
+// Transparent bidirectional relay. Browser connects via AgentCore WSS endpoint,
+// platform routes to this handler, we bridge to the internal OpenClaw Gateway.
+// Identity/init already handled by HTTP bootstrap (warmup action).
+const wsBridgeServer = new (require("ws").Server)({ noServer: true });
+
+server.on("upgrade", (req, socket, head) => {
+  if (req.url !== "/ws" && !req.url.startsWith("/ws?")) {
+    socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+
+  if (!openclawReady) {
+    console.warn("[ws-bridge] OpenClaw not ready — rejecting WebSocket upgrade");
+    socket.write("HTTP/1.1 503 Service Unavailable\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+
+  wsBridgeServer.handleUpgrade(req, socket, head, (downstream) => {
+    console.log("[ws-bridge] Client connected, bridging to OpenClaw Gateway...");
+    lastActivityTime = Math.floor(Date.now() / 1000);
+
+    const upstream = new WebSocket(`ws://127.0.0.1:${OPENCLAW_PORT}`, {
+      origin: `http://127.0.0.1:${OPENCLAW_PORT}`,
+    });
+
+    let upstreamOpen = false;
+    const pendingMessages = [];
+
+    upstream.on("open", () => {
+      upstreamOpen = true;
+      console.log("[ws-bridge] Upstream connected to OpenClaw Gateway");
+      for (const msg of pendingMessages) {
+        upstream.send(msg);
+      }
+      pendingMessages.length = 0;
+    });
+
+    downstream.on("message", (data) => {
+      lastActivityTime = Math.floor(Date.now() / 1000);
+      if (upstreamOpen && upstream.readyState === WebSocket.OPEN) {
+        upstream.send(data);
+      } else {
+        pendingMessages.push(data);
+      }
+    });
+
+    upstream.on("message", (data) => {
+      lastActivityTime = Math.floor(Date.now() / 1000);
+      if (downstream.readyState === WebSocket.OPEN) {
+        downstream.send(data);
+      }
+    });
+
+    downstream.on("close", (code, reason) => {
+      console.log(`[ws-bridge] Client disconnected (code=${code})`);
+      if (upstream.readyState === WebSocket.OPEN) upstream.close();
+    });
+    upstream.on("close", (code, reason) => {
+      console.log(`[ws-bridge] Upstream closed (code=${code})`);
+      if (downstream.readyState === WebSocket.OPEN) downstream.close();
+    });
+    downstream.on("error", (err) => {
+      console.error(`[ws-bridge] Client error: ${err.message}`);
+      if (upstream.readyState === WebSocket.OPEN) upstream.close();
+    });
+    upstream.on("error", (err) => {
+      console.error(`[ws-bridge] Upstream error: ${err.message}`);
+      if (downstream.readyState === WebSocket.OPEN) downstream.close();
+    });
+  });
+});
+
 // --- SIGTERM handler: save workspace and exit gracefully ---
 process.on("SIGTERM", async () => {
   if (shuttingDown) return;
@@ -2080,7 +2155,7 @@ server.listen(PORT, "0.0.0.0", () => {
     `[contract] AgentCore contract server listening on http://0.0.0.0:${PORT} (per-user session mode)`,
   );
   console.log(
-    "[contract] Endpoints: GET /ping, POST /invocations {action: chat|status|warmup|cron}",
+    "[contract] Endpoints: GET /ping, POST /invocations {action: chat|status|warmup|cron}, WS /ws (Gateway bridge)",
   );
 
   // Pre-fetch secrets in background (saves ~2-3s from first-message critical path)
