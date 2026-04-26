@@ -1585,11 +1585,10 @@ const server = http.createServer(async (req, res) => {
     // HealthyBusy prevents AgentCore from terminating during active tasks.
     // Healthy allows natural idle termination when no tasks are running.
     const status = activeTaskCount > 0 ? "HealthyBusy" : "Healthy";
-    const responseBody = {
-      status,
-      time_of_last_update: lastActivityTime,
-      active_tasks: activeTaskCount,
-    };
+    // Response must match official contract: only "status" field is documented.
+    // Extra fields (time_of_last_update, active_tasks) removed — they may
+    // interfere with AgentCore's idle termination logic.
+    const responseBody = { status };
 
     // Log every ping for the first 5 minutes, then every 60s
     if (uptimeSec < 300 || now - lastPingLogTime >= PING_LOG_INTERVAL_MS) {
