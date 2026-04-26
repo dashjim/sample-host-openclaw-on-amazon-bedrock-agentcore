@@ -1028,33 +1028,12 @@ async function init(userId, actorId, channel) {
       scheduleOpenClawRestart(currentNamespace);
     });
 
-    // Session storage: symlink .openclaw → /mnt/workspace/.openclaw if available
-    const sessionStorageAvailable = setupSessionStorageSymlink();
-
-    // Restore workspace from S3 if session storage is empty or unavailable
-    if (sessionStorageAvailable) {
-      // Check if session storage .openclaw dir has content (non-empty = resumed session)
-      const mountedOpenclawDir = `${SESSION_STORAGE_MOUNT}/.openclaw`;
-      let hasContent = false;
-      try {
-        const entries = fs.readdirSync(mountedOpenclawDir);
-        hasContent = entries.length > 0;
-      } catch { /* dir doesn't exist yet */ }
-
-      if (hasContent) {
-        console.log("[contract] Session storage has existing data — skipping S3 restore");
-      } else {
-        console.log("[contract] Session storage is empty — restoring from S3 backup");
-        workspaceSync.restoreWorkspace(namespace).catch((err) => {
-          console.warn(`[contract] Workspace restore failed: ${err.message}`);
-        });
-      }
-    } else {
-      // No session storage — use S3 sync as primary (existing behavior)
-      workspaceSync.restoreWorkspace(namespace).catch((err) => {
-        console.warn(`[contract] Workspace restore failed: ${err.message}`);
-      });
-    }
+    // Session storage disabled — /mnt/workspace has a disk-full bug.
+    // Always use S3 sync as primary persistence layer.
+    // TODO: re-enable setupSessionStorageSymlink() once the bug is fixed.
+    workspaceSync.restoreWorkspace(namespace).catch((err) => {
+      console.warn(`[contract] Workspace restore failed: ${err.message}`);
+    });
 
     // 2. Wait only for proxy readiness (~5s)
     proxyReady = await waitForPort(PROXY_PORT, "Proxy", 30000, 1000);

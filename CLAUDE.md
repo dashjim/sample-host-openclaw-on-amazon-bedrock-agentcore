@@ -16,7 +16,7 @@ OpenClaw on AgentCore Runtime — a multi-channel AI messaging bot (Telegram, Sl
 - **Tools & Skills**: Built-in tool groups (full profile) + 5 ClawHub skills + 5 custom skills (S3 user files, EventBridge cron, ClawHub manage, API keys, agentcore-browser) + 2 built-in shim tools (web_fetch, web_search)
 - **Scheduling**: EventBridge Scheduler for recurring tasks — cron executor Lambda warms sessions and delivers responses to channels
 - **Per-User File Storage**: S3-backed per-user file isolation via custom `s3-user-files` skill
-- **Workspace Persistence**: AgentCore Session Storage (primary, `/mnt/workspace`) + S3 backup (5 min). `.openclaw/` symlinked to session storage mount; S3 backup restores on new sessions or version updates. **Note**: `update-agent-runtime` clears session storage — S3 backup auto-restores
+- **Workspace Persistence**: S3 sync (primary, 5 min interval). Session Storage disabled due to disk-full bug — see PR #53
 - **AI Model**: Claude Opus 4.6 via Bedrock ConverseStream (configurable via `default_model_id` in `cdk.json`, default `global.anthropic.claude-opus-4-6-v1`)
 - **Identity**: DynamoDB identity table (channel→user mapping, cross-channel binding) + Cognito User Pool
 - **Observability**: CloudWatch dashboards + alarms, Bedrock invocation logging
@@ -681,18 +681,12 @@ Only the **first channel identity** needs to be allowlisted. When a user binds a
 - **Security**: S3 key validated against user's namespace prefix + path traversal (`..`) rejection. Format validated against `VALID_BEDROCK_FORMATS` set
 - **Slack prerequisite**: Bot needs `files:read` OAuth scope to download image files
 
-### Workspace Persistence (Session Storage + S3 Backup)
-- **Primary**: AgentCore Session Storage — service-managed persistent filesystem mounted at `/mnt/workspace`. Data survives session stop/resume automatically. Configured via `filesystemConfigurations` on the Runtime
-- **Symlink**: `~/.openclaw` → `/mnt/workspace/.openclaw` — created during lazy init, transparent to OpenClaw and all skills
-- **S3 backup**: `workspace-sync.js` continues to run at 5 min interval (unchanged). Backs up to `{namespace}/.openclaw/` in the user files S3 bucket
-- **Restore logic**: On init, if session storage has existing data → skip S3 restore (resumed session). If empty → restore from S3 backup (new session or version update)
-- **Fallback**: If session storage mount not available → full S3 sync mode (5 min interval, existing behavior)
-- **Data lifecycle**: Session storage cleared on 14-day inactivity or runtime version update. S3 backup preserves data across these events
-- **⚠️ Version update clears session storage**: Every `update-agent-runtime` (new container image) resets session storage to empty. S3 backup auto-restores on next session start, but there is a window where the latest changes (since last S3 backup) may be lost. Always ensure S3 backup has run before deploying new versions
-- **VPC permissions**: S3 Gateway Endpoint defaults to allow-all — no policy change needed. Session storage is managed by AgentCore platform (not the execution role), so no IAM changes required
-- **SIGTERM grace**: Platform flushes session storage + 10s for S3 final backup
-- **Skip patterns**: `node_modules/`, `.cache/`, `*.log`, files > 10MB (S3 backup only)
-- **Same S3 bucket**: Uses `S3_USER_FILES_BUCKET` (shared with s3-user-files skill)
+### Workspace Persistence (S3 Sync — Session Storage Disabled)
+- **⚠️ Session storage disabled**: AgentCore Session Storage (`/mnt/workspace`) has a disk-full bug. The symlink setup and session-storage-first restore logic are bypassed. Code and deploy.sh changes preserved but commented out — re-enable once the bug is fixed (see PR #53)
+- **Primary**: S3 sync via `workspace-sync.js` — restores on init, saves every 5 min, final save on SIGTERM
+- **S3 bucket**: `{namespace}/.openclaw/` in the user files S3 bucket (`S3_USER_FILES_BUCKET`)
+- **SIGTERM grace**: 10s for S3 final backup
+- **Skip patterns**: `node_modules/`, `.cache/`, `*.log`, files > 10MB
 
 ### EventBridge Cron Scheduling
 - **Schedule group**: All schedules created under `openclaw-cron` group in EventBridge Scheduler
