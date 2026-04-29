@@ -31,6 +31,7 @@ SESSION_ID = os.environ.get(
 ACTOR_ID = os.environ.get("ACTOR_ID", "feishu:ou_75f0be3af5be36553d6ab69fc561a12a")
 USER_ID = os.environ.get("USER_ID", "user_c1874612116a454b")
 CHANNEL = os.environ.get("CHANNEL", "feishu")
+QUALIFIER = os.environ.get("AGENTCORE_QUALIFIER", "DEFAULT")
 REGION = os.environ.get("AWS_REGION", "us-west-2")
 GATEWAY_TOKEN = os.environ.get("GATEWAY_TOKEN", "")
 
@@ -61,6 +62,7 @@ def invoke_runtime(agentcore, action_payload):
     """invoke_agent_runtime — boto3 SDK takes raw JSON, NOT base64."""
     resp = agentcore.invoke_agent_runtime(
         agentRuntimeArn=RUNTIME_ARN,
+        qualifier=QUALIFIER,
         runtimeSessionId=SESSION_ID,
         runtimeUserId=ACTOR_ID,
         payload=json.dumps(action_payload),

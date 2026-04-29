@@ -85,5 +85,8 @@ SYNC.md
 
 # Internal post-deploy script (not for GitHub)
 post-deploy.sh
+
+# POC local env vars (contains account-specific IDs)
+tests/web-ui-poc/env.sh
 .bedrock_agentcore.yaml
 .bedrock_agentcore/
